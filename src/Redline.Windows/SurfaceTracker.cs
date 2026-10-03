@@ -65,12 +65,12 @@ public sealed class SurfaceTracker : IDisposable
 
     public async Task StartAsync()
     {
-        _focus.FocusChanged += element => Schedule(() => element);
-        _foreground.ForegroundChanged += _ => Schedule(() => AutomationElement.FocusedElement);
+        _focus.FocusChanged += element => Schedule("focus event", () => element);
+        _foreground.ForegroundChanged += hwnd => _ = VerifyForegroundFocusAsync(hwnd);
 
         await _focus.StartAsync().ConfigureAwait(false);
         _foreground.Start();
-        Schedule(() => AutomationElement.FocusedElement);
+        Schedule("startup", () => AutomationElement.FocusedElement);
     }
 
     public void SetPaused(bool paused)
@@ -83,12 +83,12 @@ public sealed class SurfaceTracker : IDisposable
         }
         else
         {
-            Schedule(() => AutomationElement.FocusedElement);
+            Schedule("resume", () => AutomationElement.FocusedElement);
         }
     }
 
     /// <summary>Queues evaluation of the element produced by <paramref name="getElement"/> (run on the UIA thread).</summary>
-    private void Schedule(Func<AutomationElement?> getElement)
+    private void Schedule(string source, Func<AutomationElement?> getElement)
     {
         if (_paused) return;
         long generation = Interlocked.Increment(ref _focusGeneration);
@@ -103,7 +103,7 @@ public sealed class SurfaceTracker : IDisposable
                 {
                     var element = getElement();
                     if (element is not null)
-                        Evaluate(element);
+                        Evaluate(element, source);
                 }
                 catch (Exception ex) when (ex is ElementNotAvailableException or System.Runtime.InteropServices.COMException)
                 {
@@ -121,10 +121,93 @@ public sealed class SurfaceTracker : IDisposable
         }
     }
 
+    /// <summary>
+    /// Fallback for apps that activate without raising a UIA focus event. UIA focus events stay
+    /// authoritative: this never supersedes them, it only re-checks global focus once it has had
+    /// time to settle and belongs to the window that came to the foreground. Querying immediately
+    /// would see the previous app's element, look like "same surface", and silently miss the switch.
+    /// </summary>
+    private async Task VerifyForegroundFocusAsync(IntPtr hwnd)
+    {
+        _ = GetWindowThreadProcessId(hwnd, out uint foregroundPid);
+
+        foreach (var delay in ForegroundSettleDelays)
+        {
+            await Task.Delay(delay).ConfigureAwait(false);
+            if (_paused || GetForegroundWindow() != hwnd)
+                return; // paused, or another switch happened and has its own check
+
+            bool settled;
+            try
+            {
+                settled = await _uia.InvokeAsync(() =>
+                {
+                    // A focus event already attached a surface in this app — nothing to fall back for,
+                    // and re-evaluating could swap to a different element for the same editor.
+                    if (_adapter is not null && _adapter.Context.ProcessId == foregroundPid)
+                        return true;
+
+                    var element = AutomationElement.FocusedElement;
+                    if (element is null || element.Current.ProcessId != foregroundPid)
+                        return false; // global focus hasn't reached the new window yet
+
+                    Evaluate(element, "foreground fallback");
+                    return true;
+                }).ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                return; // shutting down
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or System.Runtime.InteropServices.COMException)
+            {
+                settled = false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed verifying focus after foreground change");
+                return;
+            }
+
+            if (settled) return;
+        }
+    }
+
+    private static readonly TimeSpan[] ForegroundSettleDelays =
+        [TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(500)];
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
     /// <summary>UIA thread only.</summary>
-    private void Evaluate(AutomationElement element)
+    private void Evaluate(AutomationElement element, string source)
     {
         var info = ElementInfo.Capture(element);
+        _logger.LogDebug("Evaluating ({Source}): {Process} {ControlType}/{ClassName} id={SurfaceId}",
+            source, info.ProcessName, info.ControlType, info.ClassName, info.SurfaceId);
+
+        // Chromium (Teams, ChatGPT, Electron apps) sends a stray focus event for a hidden,
+        // non-focusable helper Edit ~200-500 ms after the real one, while keyboard focus stays in
+        // the editor. Something that can't take keyboard focus isn't where the user is typing,
+        // so trust UIA's global focus instead.
+        if (source == "focus event" && !info.IsKeyboardFocusable)
+        {
+            var actual = AutomationElement.FocusedElement;
+            if (actual is not null)
+            {
+                var actualInfo = ElementInfo.Capture(actual);
+                if (actualInfo.SurfaceId != info.SurfaceId)
+                {
+                    _logger.LogDebug("Ignoring focus event for non-focusable {ControlType}; global focus is {ActualType}/{ActualClass}",
+                        info.ControlType, actualInfo.ControlType, actualInfo.ClassName);
+                    element = actual;
+                    info = actualInfo;
+                }
+            }
+        }
 
         // Clicking Redline's own diagnostics window shouldn't drop the surface being inspected.
         if (info.ProcessId == Environment.ProcessId)
@@ -136,14 +219,15 @@ public sealed class SurfaceTracker : IDisposable
         var decision = _security.Evaluate(info);
         if (!decision.Allowed)
         {
-            Detach($"Blocked: {decision.Reason}");
+            Detach($"Blocked: {decision.Reason} ({info.ProcessName} {info.ControlType}/{info.ClassName})");
             return;
         }
 
         var factory = _selector.Select(info);
         if (factory is null)
         {
-            Detach("No text surface focused");
+            // Control type/class/process carry no user text and are what's needed to diagnose a miss.
+            Detach($"No text surface focused ({info.ProcessName} {info.ControlType}/{info.ClassName})");
             return;
         }
 
@@ -184,7 +268,7 @@ public sealed class SurfaceTracker : IDisposable
             {
                 return;
             }
-            Schedule(() => AutomationElement.FocusedElement);
+            Schedule("surface lost", () => AutomationElement.FocusedElement);
         };
 
         _logger.LogInformation("Attached {Surface} (patterns: {Patterns})", surface, string.Join(",", adapter.Capabilities.SupportedPatterns));

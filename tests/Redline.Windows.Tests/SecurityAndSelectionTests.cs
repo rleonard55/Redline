@@ -107,11 +107,12 @@ public class AdapterSelectorTests
     }
 
     [Theory]
-    [InlineData("NetUITextbox")]          // Word ribbon font name / size
-    [InlineData("NetUISearchBoxTextbox")] // Office "Search" box
-    public void OfficeRibbonControls_AreRejected(string className)
+    [InlineData("Win32", "NetUITextbox")]          // Word ribbon font name / size
+    [InlineData("Win32", "NetUISearchBoxTextbox")] // Office "Search" box
+    [InlineData("Chrome", "OmniboxViewViews")]     // Chrome / Edge address bar
+    public void NonProseCommandControls_AreRejected(string framework, string className)
     {
-        Assert.Null(_selector.Select(Info("Edit", "Win32", true, true, className: className)));
+        Assert.Null(_selector.Select(Info("Edit", framework, true, true, className: className)));
     }
 
     private sealed class HighPriorityFactory : ITextSurfaceAdapterFactory

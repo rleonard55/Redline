@@ -22,6 +22,7 @@ public sealed record ElementInfo
     public long NativeWindowHandle { get; init; }
     public bool IsPassword { get; init; }
     public bool IsEnabled { get; init; }
+    public bool IsKeyboardFocusable { get; init; }
     public bool SupportsTextPattern { get; init; }
     public bool SupportsValuePattern { get; init; }
     public bool ValueIsReadOnly { get; init; }
@@ -51,6 +52,7 @@ public sealed record ElementInfo
             NativeWindowHandle = current.NativeWindowHandle,
             IsPassword = current.IsPassword,
             IsEnabled = current.IsEnabled,
+            IsKeyboardFocusable = current.IsKeyboardFocusable,
             SupportsTextPattern = element.TryGetCurrentPattern(TextPattern.Pattern, out _),
             SupportsValuePattern = supportsValue,
             ValueIsReadOnly = valueReadOnly,

@@ -31,8 +31,10 @@ public sealed class GenericUiaAdapterFactory : ITextSurfaceAdapterFactory
         if (!info.SupportsTextPattern && !info.SupportsValuePattern)
             return false;
 
-        // Office command UI (ribbon font/size boxes, search box) is editable but never prose.
-        if (info.ClassName.StartsWith("NetUI", StringComparison.Ordinal))
+        // Editable but never prose: Office command UI (ribbon font/size boxes, search box) and
+        // the Chromium/Edge address bar (URLs and search queries).
+        if (info.ClassName.StartsWith("NetUI", StringComparison.Ordinal) ||
+            info.ClassName == "OmniboxViewViews")
             return false;
 
         switch (info.ControlType)
