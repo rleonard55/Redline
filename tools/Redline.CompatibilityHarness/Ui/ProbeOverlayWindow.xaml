@@ -1,0 +1,15 @@
+<Window x:Class="Redline.CompatibilityHarness.Ui.ProbeOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Redline Probe Overlay"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        KeyDown="Window_KeyDown"
+        Loaded="Window_Loaded">
+    <Canvas x:Name="OverlayCanvas">
+        <!-- Bounding rectangles will be added dynamically here -->
+    </Canvas>
+</Window>

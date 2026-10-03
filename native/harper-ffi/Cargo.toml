@@ -1,0 +1,22 @@
+[package]
+name = "harper-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "C ABI over harper-core for Redline"
+
+[lib]
+name = "harper_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pinned: the FFI couples to harper-core's Rust API (KD-3 / risk R2). Bump deliberately.
+harper-core = "=2.11.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+# Must stay "unwind": lib.rs relies on catch_unwind to keep panics from crossing the FFI boundary.
+panic = "unwind"

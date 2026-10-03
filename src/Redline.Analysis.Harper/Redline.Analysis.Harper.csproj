@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Redline.Analysis.Harper</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <HarperFfiDir>$(MSBuildThisFileDirectory)..\..\native\harper-ffi\</HarperFfiDir>
+    <HarperFfiDll>$(HarperFfiDir)target\release\harper_ffi.dll</HarperFfiDll>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Redline.Core\Redline.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Ship the native library next to the managed assembly when it has been built. -->
+  <ItemGroup Condition="Exists('$(HarperFfiDll)')">
+    <None Include="$(HarperFfiDll)" Link="harper_ffi.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Opt-in: dotnet build -p:BuildHarper=true runs cargo first (requires the Rust toolchain). -->
+  <Target Name="BuildHarperFfi" BeforeTargets="BeforeBuild" Condition="'$(BuildHarper)' == 'true'">
+    <Exec Command="cargo build --release" WorkingDirectory="$(HarperFfiDir)" />
+    <ItemGroup>
+      <None Include="$(HarperFfiDll)" Link="harper_ffi.dll" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>
