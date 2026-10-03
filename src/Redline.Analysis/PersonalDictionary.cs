@@ -31,6 +31,8 @@ public sealed class PersonalDictionary : IPersonalDictionary
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Redline", "personal_dictionary.txt");
 
+    public event Action? Changed;
+
     public IReadOnlyCollection<string> Words
     {
         get { lock (_gate) return _words.ToArray(); }
@@ -49,9 +51,11 @@ public sealed class PersonalDictionary : IPersonalDictionary
 
         lock (_gate)
         {
-            if (_words.Add(word))
-                Save();
+            if (!_words.Add(word))
+                return;
+            Save();
         }
+        Changed?.Invoke();
     }
 
     public bool Remove(string word)
@@ -61,8 +65,9 @@ public sealed class PersonalDictionary : IPersonalDictionary
             if (!_words.Remove(word.Trim()))
                 return false;
             Save();
-            return true;
         }
+        Changed?.Invoke();
+        return true;
     }
 
     /// <summary>Caller holds _gate. Writes to a temp file then swaps, so a crash can't truncate the dictionary.</summary>

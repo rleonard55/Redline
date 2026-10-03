@@ -803,6 +803,8 @@ public class SpellAnalyzer : ITextAnalyzer
 
 ### 2.2 Replacement Engine Priority Chain
 
+> **Revised during implementation:** the shipped order is *select range + type* → *select range + guarded paste* → *ValuePattern.SetValue* (only for controls with no TextPattern). `SetValue` rewrites the whole document — losing undo history and formatting and risking concurrent edits — and Phase 0 showed it silently fails in CKEditor, while select+type preserved undo/formatting in every tested app (Notepad, Word, Teams, Outlook). The paste fallback only runs when the clipboard is empty or plain text, so it can be restored exactly. The chart below is the original design.
+
 ```mermaid
 graph TD
     A["Verify focus on target element"] --> B{"Adapter-specific\nreplace available?"}

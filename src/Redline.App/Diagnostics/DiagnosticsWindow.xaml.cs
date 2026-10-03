@@ -1,12 +1,17 @@
 using System.Collections.Specialized;
 using System.Windows;
+using System.Windows.Input;
+using Redline.Core.Models;
 
 namespace Redline.App.Diagnostics;
 
 public partial class DiagnosticsWindow : Window
 {
-    public DiagnosticsWindow(DiagnosticsViewModel viewModel)
+    private readonly Action<TextIssue> _fixIssue;
+
+    public DiagnosticsWindow(DiagnosticsViewModel viewModel, Action<TextIssue> fixIssue)
     {
+        _fixIssue = fixIssue;
         InitializeComponent();
         DataContext = viewModel;
 
@@ -18,5 +23,11 @@ public partial class DiagnosticsWindow : Window
         };
         viewModel.Log.CollectionChanged += scroll;
         Closed += (_, _) => viewModel.Log.CollectionChanged -= scroll;
+    }
+
+    private void IssueGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (IssueGrid.SelectedItem is IssueRow row)
+            _fixIssue(row.Issue);
     }
 }

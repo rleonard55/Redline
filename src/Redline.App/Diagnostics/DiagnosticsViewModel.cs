@@ -10,7 +10,7 @@ using Redline.Windows;
 
 namespace Redline.App.Diagnostics;
 
-public sealed record IssueRow(string Category, int Offset, int Length, string Text, string Message, string Suggestions, string Analyzer);
+public sealed record IssueRow(string Category, int Offset, int Length, string Text, string Message, string Suggestions, string Analyzer, TextIssue Issue);
 
 /// <summary>
 /// Collects tracker/pipeline events for the diagnostics window. Lives for the whole app so
@@ -26,11 +26,13 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
     private string _snapshot = string.Empty;
     private string _analysis = string.Empty;
     private long _latestSnapshotVersion;
+    private string? _surfaceId;
 
     public DiagnosticsViewModel(
         Dispatcher ui,
         SurfaceTracker tracker,
         AnalysisPipeline pipeline,
+        IssueCacheManager cache,
         IEnumerable<ITextAnalyzer> analyzers,
         DiagnosticsLog log)
     {
@@ -50,6 +52,7 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
         tracker.SurfaceChanged += (_, e) => Post(() =>
         {
             _latestSnapshotVersion = 0;
+            _surfaceId = e.Surface?.SurfaceId;
             Surface = e.Surface is null ? $"None — {e.Reason}" : e.Surface.ToString();
             Capabilities = e.Capabilities is null ? string.Empty : Describe(e.Capabilities);
             Snapshot = string.Empty;
@@ -65,6 +68,12 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
         });
 
         pipeline.AnalysisCompleted += (_, r) => Post(() => ShowResult(r));
+
+        // The issue list comes from the cache so dictionary/ignore decisions show immediately.
+        cache.IssuesChanged += (_, e) => Post(() =>
+        {
+            if (e.SurfaceId == _surfaceId) ShowIssues(e.Issues);
+        });
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -84,15 +93,19 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
         bool stale = r.Snapshot.Version < _latestSnapshotVersion;
         Analysis = $"v{r.Snapshot.Version} {(r.Incremental ? "incremental" : "full")} " +
                    $"[{r.AnalyzedRange.Start}..{r.AnalyzedRange.End}) in {r.Duration.TotalMilliseconds:F1} ms ({timings}) — " +
-                   $"{r.Issues.Issues.Count} issue(s){(stale ? " — newer edit pending" : string.Empty)}";
+                   $"{r.Issues.Issues.Count} issue(s) before filters{(stale ? " — newer edit pending" : string.Empty)}";
 
+    }
+
+    private void ShowIssues(IssueSet set)
+    {
         Issues.Clear();
-        foreach (var i in r.Issues.Issues)
+        foreach (var i in set.Issues)
         {
             Issues.Add(new IssueRow(
                 i.Category.ToString(), i.StartOffset, i.Length, i.OriginalText, i.Message,
                 string.Join(" | ", i.Suggestions.Select(s => s.Length == 0 ? "(remove)" : s)),
-                i.Analyzer));
+                i.Analyzer, i));
         }
     }
 

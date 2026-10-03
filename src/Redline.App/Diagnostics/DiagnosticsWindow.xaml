@@ -40,8 +40,10 @@
             <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Analyzers}" />
         </Grid>
 
-        <DataGrid Grid.Row="1" ItemsSource="{Binding Issues}" AutoGenerateColumns="False" IsReadOnly="True"
-                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" CanUserAddRows="False">
+        <DataGrid Grid.Row="1" x:Name="IssueGrid" ItemsSource="{Binding Issues}" AutoGenerateColumns="False" IsReadOnly="True"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" CanUserAddRows="False"
+                  SelectionMode="Single" MouseDoubleClick="IssueGrid_MouseDoubleClick"
+                  ToolTip="Double-click an issue to fix it (or use the suggestion hotkey in the app)">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="80" />
                 <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="60" />

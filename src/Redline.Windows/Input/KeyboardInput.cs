@@ -1,0 +1,128 @@
+using System.Runtime.InteropServices;
+
+namespace Redline.Windows.Input;
+
+/// <summary>
+/// Synthesized keyboard input via SendInput. Text is sent as KEYEVENTF_UNICODE events, which
+/// bypass keyboard layouts and dead keys. Each call submits all its events in one SendInput
+/// batch so the user's own keystrokes can't interleave with them.
+/// </summary>
+/// <remarks>
+/// Input goes to whatever has keyboard focus — callers must verify focus immediately before.
+/// SendInput can't reach elevated windows from a non-elevated process (UIPI); that shows up as
+/// "nothing changed" in the caller's verification.
+/// </remarks>
+public static class KeyboardInput
+{
+    public const ushort VK_BACK = 0x08;
+    public const ushort VK_SHIFT = 0x10;
+    public const ushort VK_CONTROL = 0x11;
+    public const ushort VK_MENU = 0x12;
+    public const ushort VK_DELETE = 0x2E;
+    public const ushort VK_LWIN = 0x5B;
+    public const ushort VK_RWIN = 0x5C;
+    public const ushort VK_V = 0x56;
+    public const ushort VK_Z = 0x5A;
+
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
+
+    /// <summary>Marks Redline's own synthesized input (dwExtraInfo) so future hooks can recognize it.</summary>
+    private static readonly IntPtr RedlineMarker = new(0x52444C4E); // "RDLN"
+
+    /// <summary>Types <paramref name="text"/>. Returns false if Windows rejected any of the events.</summary>
+    public static bool TypeText(string text)
+    {
+        var inputs = new INPUT[text.Length * 2];
+        for (int i = 0; i < text.Length; i++)
+        {
+            inputs[2 * i] = Key(0, text[i], KEYEVENTF_UNICODE);
+            inputs[2 * i + 1] = Key(0, text[i], KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+        }
+        return Send(inputs);
+    }
+
+    /// <summary>Presses and releases <paramref name="key"/> while holding <paramref name="modifiers"/>.</summary>
+    public static bool Press(ushort key, params ushort[] modifiers)
+    {
+        var inputs = new List<INPUT>();
+        foreach (var m in modifiers) inputs.Add(Key(m, 0, 0));
+        uint extended = key is VK_DELETE ? KEYEVENTF_EXTENDEDKEY : 0;
+        inputs.Add(Key(key, 0, extended));
+        inputs.Add(Key(key, 0, extended | KEYEVENTF_KEYUP));
+        foreach (var m in modifiers.Reverse()) inputs.Add(Key(m, 0, KEYEVENTF_KEYUP));
+        return Send(inputs.ToArray());
+    }
+
+    /// <summary>
+    /// Waits until Shift, Ctrl, Alt and Win are all physically released, so synthesized text isn't
+    /// combined with a modifier the user is still holding (e.g. from the hotkey that opened the popup).
+    /// </summary>
+    public static async Task<bool> WaitForModifiersReleasedAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            if (!IsDown(VK_SHIFT) && !IsDown(VK_CONTROL) && !IsDown(VK_MENU) && !IsDown(VK_LWIN) && !IsDown(VK_RWIN))
+                return true;
+            if (DateTime.UtcNow >= deadline)
+                return false;
+            await Task.Delay(20, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static bool IsDown(ushort vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
+
+    private static INPUT Key(ushort vk, ushort scan, uint flags) => new()
+    {
+        type = INPUT_KEYBOARD,
+        u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, wScan = scan, dwFlags = flags, dwExtraInfo = RedlineMarker } },
+    };
+
+    private static bool Send(INPUT[] inputs) =>
+        inputs.Length == 0 || SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>()) == inputs.Length;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint type;
+        public InputUnion u;
+    }
+
+    // The union must include MOUSEINPUT (its largest member) or sizeof(INPUT) is wrong and SendInput fails.
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+}

@@ -25,5 +25,12 @@ public record TextIssue
     public double Confidence { get; init; } = 1.0;
     public long SnapshotVersion { get; init; }
 
+    /// <summary>
+    /// Identifies the check that produced the issue, for "Ignore rule". Analyzers set it when they
+    /// can name the rule more precisely than analyzer + category.
+    /// </summary>
+    public string RuleId { get => _ruleId ?? $"{Analyzer}:{Category}"; init => _ruleId = value; }
+    private readonly string? _ruleId;
+
     public TextRange Range => new(StartOffset, Length);
 }

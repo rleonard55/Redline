@@ -34,7 +34,7 @@ public sealed class SurfaceTracker : IDisposable
     private volatile bool _paused;
 
     // UIA thread only.
-    private ITextSurfaceAdapter? _adapter;
+    private volatile ITextSurfaceAdapter? _adapter;
     private TextChangeWatcher? _watcher;
     private string? _lastDetachReason;
 
@@ -60,6 +60,9 @@ public sealed class SurfaceTracker : IDisposable
     public event EventHandler<SnapshotChangedEventArgs>? SnapshotChanged;
 
     public TextSurfaceContext? CurrentSurface => _adapter?.Context;
+
+    /// <summary>The attached surface's adapter, or null. Safe from any thread; may be detached at any moment.</summary>
+    public ITextSurfaceAdapter? CurrentAdapter => _adapter;
 
     public bool IsPaused => _paused;
 

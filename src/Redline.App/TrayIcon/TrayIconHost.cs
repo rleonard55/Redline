@@ -23,7 +23,7 @@ public sealed class TrayIconHost : IDisposable
         {
             setPaused(_pauseItem.Checked);
             _icon!.Icon = _pauseItem.Checked ? _pausedIcon : _activeIcon;
-            _icon.Text = _pauseItem.Checked ? "Redline (paused)" : "Redline";
+            _icon.Text = _pauseItem.Checked ? "Redline (paused)" : _activeText;
         };
 
         var menu = new Forms.ContextMenuStrip();
@@ -68,6 +68,19 @@ public sealed class TrayIconHost : IDisposable
             DestroyIcon(hIcon);
         }
     }
+
+    /// <summary>Shows the suggestion hotkey in the tray tooltip (max 63 chars).</summary>
+    public void SetHotkeyHint(string? hotkey)
+    {
+        _activeText = hotkey is null ? "Redline" : $"Redline — {hotkey} for suggestions";
+        if (!_pauseItem.Checked) _icon.Text = _activeText;
+    }
+
+    private string _activeText = "Redline";
+
+    /// <summary>Shows a transient tray notification.</summary>
+    public void Notify(string message, bool isError = false) =>
+        _icon.ShowBalloonTip(4000, "Redline", message, isError ? Forms.ToolTipIcon.Warning : Forms.ToolTipIcon.Info);
 
     public void Dispose()
     {

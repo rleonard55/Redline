@@ -40,6 +40,9 @@ public static class HarperResultMapper
                 Message = lint.Message,
                 Suggestions = lint.Suggestions,
                 Analyzer = "Harper",
+                // harper-core's Lint carries no rule name; kind + message is the closest stable key.
+                // Messages that embed the flagged word make this effectively per-word.
+                RuleId = $"Harper:{lint.Kind}:{lint.Message}",
                 SnapshotVersion = request.SnapshotVersion,
             });
         }

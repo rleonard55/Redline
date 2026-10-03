@@ -111,6 +111,7 @@ public sealed class SpellAnalyzer : ITextAnalyzer
                     Message = message,
                     Suggestions = suggestions,
                     Analyzer = Name,
+                    RuleId = action == CorrectiveAction.Delete ? "Spelling:RepeatedWord" : "Spelling:Misspelling",
                     SnapshotVersion = request.SnapshotVersion,
                 });
             }

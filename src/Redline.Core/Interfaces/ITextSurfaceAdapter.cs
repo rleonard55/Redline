@@ -20,4 +20,24 @@ public interface ITextSurfaceAdapter : IDisposable
 
     /// <summary>Screen rectangles (physical pixels) covering <paramref name="range"/>; empty if unavailable.</summary>
     Task<IReadOnlyList<TextBounds>> GetBoundsAsync(TextRange range, CancellationToken ct = default);
+
+    // --- Editing (used by the replacement engine) ---
+
+    /// <summary>True if this surface currently holds keyboard focus.</summary>
+    Task<bool> HasKeyboardFocusAsync(CancellationToken ct = default);
+
+    /// <summary>Asks the surface to take keyboard focus (activating its window).</summary>
+    Task FocusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Selects <paramref name="range"/> (UTF-16 offsets into <paramref name="documentText"/>) and
+    /// returns true only if the control's selection then reads exactly as that substring.
+    /// </summary>
+    Task<bool> SelectAsync(TextRange range, string documentText, CancellationToken ct = default);
+
+    /// <summary>
+    /// Replaces the control's entire value, but only if it still equals <paramref name="expectedCurrent"/>.
+    /// Returns false if unsupported or the value had changed.
+    /// </summary>
+    Task<bool> SetValueAsync(string expectedCurrent, string newValue, CancellationToken ct = default);
 }
