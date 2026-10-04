@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Redline.Core.Diagnostics;
 using Redline.Core.Geometry;
 using Redline.Core.Interfaces;
 using Redline.Core.Models;
@@ -37,6 +38,7 @@ public sealed class OverlayManager : IDisposable
     private readonly IssueCacheManager _cache;
     private readonly WindowEventMonitor _windowEvents;
     private readonly ILogger _logger;
+    private readonly PerfCounters? _perf;
     private readonly DispatcherTimer _refresh;
     private readonly DispatcherTimer _settle;
     private readonly DispatcherTimer _anchorTimer;
@@ -59,8 +61,9 @@ public sealed class OverlayManager : IDisposable
     private bool _anchorCheckRunning;
 
     public OverlayManager(Dispatcher ui, SurfaceTracker tracker, DocumentState document, IssueCacheManager cache,
-        WindowEventMonitor windowEvents, ILogger<OverlayManager>? logger = null)
+        WindowEventMonitor windowEvents, ILogger<OverlayManager>? logger = null, PerfCounters? perf = null)
     {
+        _perf = perf;
         _ui = ui;
         _tracker = tracker;
         _document = document;
@@ -296,6 +299,7 @@ public sealed class OverlayManager : IDisposable
         _window ??= new OverlayWindow();
         _window.ShowAt(surface.Value, spans, _root);
         _hover.SetRegions(_root, regions);
+        _perf?.Record("overlay", sw.Elapsed);
 
         int anchorIndex = bounds.ToList().FindIndex(b => b.Count > 0);
         _anchor = anchorIndex >= 0 ? (drawn[anchorIndex].Range, bounds[anchorIndex][0]) : null;

@@ -1,5 +1,6 @@
 using System.IO;
 using Microsoft.Extensions.Logging;
+using Redline.Core.Diagnostics;
 
 namespace Redline.App.Logging;
 
@@ -9,25 +10,38 @@ public sealed record LogEntry(DateTimeOffset Time, LogLevel Level, string Catego
 }
 
 /// <summary>
-/// In-memory ring buffer for the diagnostics window plus a daily file under
-/// %LOCALAPPDATA%\Redline\logs. Callers must never log user text (see Cross-Cutting: Logging).
+/// In-memory ring buffer for the diagnostics window (every level) plus daily files under
+/// %LOCALAPPDATA%\Redline\logs (<see cref="FileLevel"/> and up; rotation and retention in
+/// <see cref="LogFiles"/>). Callers must never log user text (see Cross-Cutting: Logging).
 /// </summary>
 public sealed class DiagnosticsLog : ILoggerProvider
 {
     private const int Capacity = 500;
     private readonly object _gate = new();
     private readonly Queue<LogEntry> _entries = new();
-    private readonly string? _logDirectory;
+    private readonly LogFiles? _files;
 
     public DiagnosticsLog(string? logDirectory)
     {
-        _logDirectory = logDirectory;
-        if (logDirectory is not null)
-            Directory.CreateDirectory(logDirectory);
+        LogDirectory = logDirectory;
+        if (logDirectory is null) return;
+        try
+        {
+            _files = new LogFiles(logDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // No log files then; the diagnostics window still works.
+        }
     }
 
     public static string DefaultDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Redline", "logs");
+
+    public string? LogDirectory { get; }
+
+    /// <summary>Lowest level written to the log file: Information normally, Debug in diagnostics mode.</summary>
+    public LogLevel FileLevel { get; set; } = LogLevel.Information;
 
     public event Action<LogEntry>? EntryAdded;
 
@@ -36,7 +50,7 @@ public sealed class DiagnosticsLog : ILoggerProvider
         lock (_gate) return _entries.ToArray();
     }
 
-    public void Write(LogLevel level, string category, string message)
+    public void Write(LogLevel level, string category, string message, string? fileDetail = null)
     {
         var entry = new LogEntry(DateTimeOffset.Now, level, category, message);
         lock (_gate)
@@ -44,13 +58,13 @@ public sealed class DiagnosticsLog : ILoggerProvider
             _entries.Enqueue(entry);
             while (_entries.Count > Capacity) _entries.Dequeue();
 
-            if (_logDirectory is not null)
+            if (_files is not null && level >= FileLevel)
             {
                 try
                 {
-                    File.AppendAllText(Path.Combine(_logDirectory, $"redline-{entry.Time:yyyyMMdd}.log"), entry + Environment.NewLine);
+                    _files.Append(entry + Environment.NewLine + (fileDetail ?? string.Empty));
                 }
-                catch (IOException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // Logging must never take the app down.
                 }
@@ -79,15 +93,21 @@ public sealed class DiagnosticsLog : ILoggerProvider
         {
             if (!IsEnabled(logLevel)) return;
             var message = formatter(state, exception);
-            // Type + message keeps lines readable; no stack traces until Phase 5's structured crash logging.
+            string? detail = null;
+            // Type + message keeps lines readable; errors also get the stack trace, in the file only.
             if (exception is not null)
             {
                 var exMsg = exception.InnerException is not null
                     ? $"{exception.GetType().Name}: {exception.Message} -> {exception.InnerException.GetType().Name}: {exception.InnerException.Message}"
                     : $"{exception.GetType().Name}: {exception.Message}";
                 message += $" [{exMsg}]";
+                if (logLevel >= LogLevel.Error)
+                    detail = Indent(exception.ToString());
             }
-            log.Write(logLevel, category, message);
+            log.Write(logLevel, category, message, detail);
         }
+
+        private static string Indent(string text) =>
+            string.Concat(text.Split('\n').Select(l => "    " + l.TrimEnd('\r') + Environment.NewLine));
     }
 }

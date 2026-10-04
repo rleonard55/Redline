@@ -1,5 +1,6 @@
 using System.Windows.Automation;
 using Microsoft.Extensions.Logging;
+using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
 using Redline.Core.Models;
 using Redline.Core.Pipeline;
@@ -29,6 +30,7 @@ public sealed class SurfaceTracker : IDisposable
     private readonly SecurityFilter _security;
     private readonly DocumentState _document;
     private readonly ILogger<SurfaceTracker> _logger;
+    private readonly PerfCounters? _perf;
 
     private long _focusGeneration;
     private volatile bool _paused;
@@ -53,8 +55,10 @@ public sealed class SurfaceTracker : IDisposable
         AdapterSelector selector,
         SecurityFilter security,
         DocumentState document,
-        ILogger<SurfaceTracker> logger)
+        ILogger<SurfaceTracker> logger,
+        PerfCounters? perf = null)
     {
+        _perf = perf;
         _uia = uia;
         _focus = focus;
         _foreground = foreground;
@@ -257,7 +261,7 @@ public sealed class SurfaceTracker : IDisposable
         DetachCore();
 
         var adapter = factory.Create(_uia, element, info);
-        var watcher = new TextChangeWatcher(_uia, element, adapter, _logger);
+        var watcher = new TextChangeWatcher(_uia, element, adapter, _logger, _perf);
         _adapter = adapter;
         _watcher = watcher;
         _lastDetachReason = null;

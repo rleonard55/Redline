@@ -23,12 +23,15 @@ public partial class SettingsWindow : Window
     private readonly IReadOnlyList<string> _languages;
     private readonly string? _activeLanguage;
     private readonly IReadOnlyCollection<string> _builtInExclusions;
+    private readonly string? _logDirectory;
     private bool _loading;
 
     public SettingsWindow(
         SettingsStore store, HotkeyManager hotkeys, IPersonalDictionary dictionary, IgnoreList ignores,
-        IReadOnlyList<string> languages, string? activeLanguage, IReadOnlyCollection<string> builtInExclusions)
+        IReadOnlyList<string> languages, string? activeLanguage, IReadOnlyCollection<string> builtInExclusions,
+        string? logDirectory)
     {
+        _logDirectory = logDirectory;
         _store = store;
         _hotkeys = hotkeys;
         _dictionary = dictionary;
@@ -43,6 +46,7 @@ public partial class SettingsWindow : Window
         StartupHint.Text = RunningFromBuildFolder()
             ? "Redline is running from a build folder; signing in will start this copy until the setting is turned off."
             : string.Empty;
+        LogsHint.Text = logDirectory ?? "Logging to files is unavailable.";
         LoadSettings(store.Current);
         LoadLists();
 
@@ -80,6 +84,7 @@ public partial class SettingsWindow : Window
             UpdateHotkeyHint(s);
             StartupBox.IsChecked = s.General.StartWithWindows;
             HoverBox.IsChecked = s.General.HoverSuggestions;
+            DiagnosticsBox.IsChecked = s.General.DiagnosticsMode;
 
             SpellingBox.IsChecked = s.Writing.Spelling;
             GrammarBox.IsChecked = s.Writing.Grammar;
@@ -106,6 +111,21 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         bool enabled = EnabledBox.IsChecked == true, startup = StartupBox.IsChecked == true, hover = HoverBox.IsChecked == true;
         _store.Update(s => s with { General = s.General with { Enabled = enabled, StartWithWindows = startup, HoverSuggestions = hover } });
+    }
+
+    // ---- Diagnostics ----
+
+    private void Diagnostics_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        bool on = DiagnosticsBox.IsChecked == true;
+        _store.Update(s => s with { General = s.General with { DiagnosticsMode = on } });
+    }
+
+    private void OpenLogs_Click(object sender, RoutedEventArgs e)
+    {
+        if (_logDirectory is null || !Directory.Exists(_logDirectory)) return;
+        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_logDirectory}\"") { UseShellExecute = true });
     }
 
     private void Language_SelectionChanged(object sender, SelectionChangedEventArgs e)

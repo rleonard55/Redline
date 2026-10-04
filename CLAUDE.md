@@ -15,7 +15,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 2 Corrections (engine, popup, ignore/dictionary) | done | 205f0de |
 | 3 Inline squiggle overlay | done | f683e89 |
 | 4 Compatibility hardening | done | 93bb57d, d8e6afb |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done | 4d1ceb4, (part 2 next commit) |
+| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done | 4d1ceb4, 57b4473, (part 3 next commit) |
 | 6 Optional AI | not started | |
 
 ### Phase 5 — part 2 (done), how it fits together
@@ -40,14 +40,27 @@ list of app quirks and how each is handled. Read both before changing behavior.
   round-trip, hotkey capture with real key presses, Start-with-Windows toggle (the Settings window itself was
   smoke-tested via a scratch WPF harness).
 
+### Phase 5 — part 3 (done)
+- `Core/Diagnostics/LogFiles`: daily `redline-yyyyMMdd.log`, rolls to `-1`, `-2`… at 10 MB; prunes logs and
+  `crash-*.txt` older than 7 days, then oldest-first to 50 MB total (never the current file). Prunes on open/rollover.
+- `DiagnosticsLog.FileLevel`: Information normally, Debug when `General.DiagnosticsMode` is on (ring buffer for the
+  Diagnostics window keeps every level). Error+ with an exception also writes the stack trace (file only).
+- `Core/Diagnostics/CrashReport`: AppDomain unhandled exceptions write `crash-*.txt` (types, messages, stack,
+  version, OS, uptime); terminating ones also leave a `crash-pending` marker, so the next start shows a tray notice.
+- `Core/Diagnostics/PerfCounters` (DI singleton, optional ctor param where used): `read` (TextChangeWatcher),
+  `analysis` + `analysis.<analyzer>` (App), `overlay` (OverlayManager layout), `correction` (ReplacementEngine).
+  Shown live in the Diagnostics window ("Timings"); summary logged every 5 min in diagnostics mode and at exit.
+- Settings window has a Diagnostics tab (toggle + Open logs folder).
+- Known flaky: `UiaIntegrationTests.GenericAdapter_ReadsText_Caret_AndGeometry` sometimes fails in
+  `AutomationElement.FromHandle` (COMException) — seen 2026-10-03 while the user's Redline was running; passes on re-run.
+
 ### Phase 5 — next steps, in order
 1. Live check of the remaining part-2 items above (needs the user's running instance closed; ask first —
    ending the process from a session may be blocked by auto mode, so ask the user to Exit from the tray).
-2. Crash handling + log retention (7 days / 50 MB, never user text), diagnostics-mode toggle,
-   perf counters.
-3. Installer — **WiX MSI** (user decided 2026-10-03; no code-signing cert, so expect SmartScreen). Must ship
+   Also part 3: Diagnostics tab toggle changes the file level, Timings row fills in, Open logs folder works.
+2. Installer — **WiX MSI** (user decided 2026-10-03; no code-signing cert, so expect SmartScreen). Must ship
    `harper_ffi.dll`. Installer should turn on start-with-Windows.
-4. Auto-update — **needs the user's decision** on hosting (e.g. GitHub Releases).
+3. Auto-update — **needs the user's decision** on hosting (e.g. GitHub Releases).
 
 Deferred (documented in docs/compatibility.md): VS Code editor support (needs a VS Code extension);
 multi-monitor / non-100% DPI is implemented but untested (user has one 100% monitor).

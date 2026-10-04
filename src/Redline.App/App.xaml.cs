@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using System.Reflection;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Redline.Analysis;
@@ -10,6 +13,7 @@ using Redline.App.Logging;
 using Redline.App.Settings;
 using Redline.App.TrayIcon;
 using Redline.Core.Corrections;
+using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
 using Redline.Core.Pipeline;
 using Redline.Core.Settings;
@@ -27,6 +31,14 @@ public partial class App : Application
     private DiagnosticsWindow? _diagnosticsWindow;
     private SettingsWindow? _settingsWindow;
     private HotkeyManager? _hotkeys;
+    private DiagnosticsLog? _log;
+    private DispatcherTimer? _perfTimer;
+    private readonly Stopwatch _uptime = Stopwatch.StartNew();
+
+    private static readonly TimeSpan PerfSummaryInterval = TimeSpan.FromMinutes(5);
+
+    public static string Version { get; } =
+        typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev";
 
     /// <summary>The suggestion hotkey actually registered, for UI hints.</summary>
     public static string? HotkeyName { get; private set; }
@@ -44,7 +56,7 @@ public partial class App : Application
             return;
         }
 
-        var log = new DiagnosticsLog(DiagnosticsLog.DefaultDirectory);
+        var log = _log = new DiagnosticsLog(DiagnosticsLog.DefaultDirectory);
         _services = ConfigureServices(log);
         _logger = _services.GetRequiredService<ILogger<App>>();
 
@@ -71,7 +83,10 @@ public partial class App : Application
             args.Handled = true;
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
             _logger.LogCritical(args.ExceptionObject as Exception, "Unhandled exception (terminating: {Terminating})", args.IsTerminating);
+            WriteCrashReport(args.ExceptionObject as Exception, "Unhandled exception (AppDomain)", args.IsTerminating);
+        };
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
             _logger.LogWarning(args.Exception, "Unobserved task exception");
@@ -103,6 +118,22 @@ public partial class App : Application
 
         var corrections = _services.GetRequiredService<CorrectionController>();
         corrections.Notify += (message, isError) => _tray.Notify(message, isError);
+
+        if (log.LogDirectory is { } logDir && CrashReport.TakePending(logDir) is { } report)
+        {
+            _logger.LogWarning("The previous run ended unexpectedly; crash report {Report}", System.IO.Path.GetFileName(report));
+            _tray.Notify("Redline closed unexpectedly last time. A crash report was saved in the logs folder.", true);
+        }
+
+        var perf = _services.GetRequiredService<PerfCounters>();
+        pipeline.AnalysisCompleted += (_, r) =>
+        {
+            perf.Record("analysis", r.Duration);
+            foreach (var (name, duration) in r.AnalyzerDurations)
+                perf.Record("analysis." + name, duration);
+        };
+        _perfTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = PerfSummaryInterval };
+        _perfTimer.Tick += (_, _) => LogPerfSummary();
 
         // Ctrl+Alt+. (the default) echoes the familiar Ctrl+. "quick fix" without shadowing it in VS Code/Office.
         _hotkeys = new HotkeyManager(() => _ = corrections.ShowForCaretAsync(), _logger);
@@ -152,6 +183,11 @@ public partial class App : Application
         _services.GetRequiredService<SecurityFilter>().SetUserExclusions(s.Applications.Excluded);
         _services.GetRequiredService<OverlayManager>().HoverEnabled = s.General.HoverSuggestions;
 
+        if (_log is not null) _log.FileLevel = s.General.DiagnosticsMode ? LogLevel.Debug : LogLevel.Information;
+        if (s.General.DiagnosticsMode) _perfTimer?.Start(); else _perfTimer?.Stop();
+        if (old is null ? s.General.DiagnosticsMode : old.General.DiagnosticsMode != s.General.DiagnosticsMode)
+            _logger?.LogInformation("Diagnostics mode: {Enabled} (Redline {Version})", s.General.DiagnosticsMode, Version);
+
         // The settings window registers a new hotkey before saving it; this covers hand edits of settings.json.
         if (old is not null && old.General.Hotkey != s.General.Hotkey
             && Hotkey.TryParse(s.General.Hotkey, out var hotkey) && !_hotkeys.TryChangeHotkey(hotkey))
@@ -182,6 +218,7 @@ public partial class App : Application
         services.AddSingleton(_ => new StartupRegistration());
 
         services.AddSingleton(log);
+        services.AddSingleton<PerfCounters>();
         services.AddLogging(b => b.ClearProviders().AddProvider(log).SetMinimumLevel(LogLevel.Debug));
 
         // Windows integration
@@ -213,7 +250,7 @@ public partial class App : Application
         // Corrections
         services.AddSingleton(sp => new ReplacementEngine(
             sp.GetRequiredService<UiaDispatcher>(), sp.GetRequiredService<DocumentState>(),
-            new ReplacementOptions(), sp.GetRequiredService<ILogger<ReplacementEngine>>()));
+            new ReplacementOptions(), sp.GetRequiredService<ILogger<ReplacementEngine>>(), sp.GetRequiredService<PerfCounters>()));
         services.AddSingleton<CorrectionController>();
 
         // Annotations
@@ -221,7 +258,7 @@ public partial class App : Application
         services.AddSingleton(sp => new OverlayManager(
             Current.Dispatcher, sp.GetRequiredService<SurfaceTracker>(), sp.GetRequiredService<DocumentState>(),
             sp.GetRequiredService<IssueCacheManager>(), sp.GetRequiredService<WindowEventMonitor>(),
-            sp.GetRequiredService<ILogger<OverlayManager>>()));
+            sp.GetRequiredService<ILogger<OverlayManager>>(), sp.GetRequiredService<PerfCounters>()));
 
         // UI
         services.AddSingleton(sp => new DiagnosticsViewModel(
@@ -230,9 +267,32 @@ public partial class App : Application
             sp.GetRequiredService<AnalysisPipeline>(),
             sp.GetRequiredService<IssueCacheManager>(),
             sp.GetServices<ITextAnalyzer>(),
-            sp.GetRequiredService<DiagnosticsLog>()));
+            sp.GetRequiredService<DiagnosticsLog>(),
+            sp.GetRequiredService<PerfCounters>()));
 
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>Timing summary (counts and milliseconds only).</summary>
+    private void LogPerfSummary()
+    {
+        var summary = _services?.GetService<PerfCounters>()?.Summary();
+        if (!string.IsNullOrEmpty(summary))
+            _logger?.LogInformation("Perf p50/p95/max: {Summary}", summary);
+    }
+
+    /// <summary>Best effort: the process may be going down, so nothing here may throw.</summary>
+    private void WriteCrashReport(Exception? exception, string context, bool terminating)
+    {
+        if (exception is null || _log?.LogDirectory is not { } dir) return;
+        try
+        {
+            CrashReport.Write(dir, exception, context, terminating, Version, _uptime.Elapsed);
+        }
+        catch
+        {
+            // Nothing more we can do.
+        }
     }
 
     private void ShowSettings()
@@ -246,7 +306,8 @@ public partial class App : Application
                 _services.GetRequiredService<SettingsStore>(), _hotkeys,
                 _services.GetRequiredService<IPersonalDictionary>(), _services.GetRequiredService<IgnoreList>(),
                 SpellAnalyzer.SupportedLanguages(), spelling?.LanguageTag,
-                _services.GetRequiredService<SecurityFilter>().BuiltInExclusions);
+                _services.GetRequiredService<SecurityFilter>().BuiltInExclusions,
+                _log?.LogDirectory);
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Show();
         }
@@ -277,6 +338,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _perfTimer?.Stop();
+        LogPerfSummary();
         _logger?.LogInformation("Redline exiting");
         _hotkeys?.Dispose();
         _tray?.Dispose();

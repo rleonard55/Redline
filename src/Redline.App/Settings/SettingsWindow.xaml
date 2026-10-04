@@ -122,6 +122,18 @@
                     <Button Grid.Row="5" Content="Restore" Width="70" HorizontalAlignment="Right" Margin="0,6,0,0" Click="RuleRestore_Click" />
                 </Grid>
             </TabItem>
+            <TabItem Header="Diagnostics">
+                <StackPanel Margin="12">
+                    <CheckBox x:Name="DiagnosticsBox" Content="Diagnostics mode (detailed logs and timing summaries)" Margin="0"
+                              Checked="Diagnostics_Changed" Unchecked="Diagnostics_Changed" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Turn this on when reporting a problem. Logs never contain the text you type; they are kept for 7 days (50 MB at most)." />
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Content="Open logs folder" Padding="10,2" Click="OpenLogs_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="LogsHint" Style="{StaticResource Hint}" />
+                </StackPanel>
+            </TabItem>
         </TabControl>
     </DockPanel>
 </Window>

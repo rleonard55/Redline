@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Redline.Core.Corrections;
+using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
 using Redline.Core.Models;
 using Redline.Core.Pipeline;
@@ -51,10 +52,13 @@ public sealed class ReplacementEngine
     private readonly DocumentState _document;
     private readonly ReplacementOptions _options;
     private readonly ILogger _logger;
+    private readonly PerfCounters? _perf;
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
 
-    public ReplacementEngine(UiaDispatcher uia, DocumentState document, ReplacementOptions? options = null, ILogger<ReplacementEngine>? logger = null)
+    public ReplacementEngine(UiaDispatcher uia, DocumentState document, ReplacementOptions? options = null, ILogger<ReplacementEngine>? logger = null,
+        PerfCounters? perf = null)
     {
+        _perf = perf;
         _uia = uia;
         _document = document;
         _options = options ?? new ReplacementOptions();
@@ -68,6 +72,7 @@ public sealed class ReplacementEngine
         try
         {
             var result = await ApplyCoreAsync(adapter, issue, replacement, sw, ct).ConfigureAwait(false);
+            _perf?.Record("correction", result.Duration);
             _logger.LogInformation("Correction in {Process} ({Category}, {Rule}): {Result}",
                 adapter.Context.ProcessName, issue.Category, issue.Analyzer, result);
             return result;

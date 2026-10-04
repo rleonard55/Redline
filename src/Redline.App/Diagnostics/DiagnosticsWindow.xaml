@@ -19,7 +19,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
-                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
             </Grid.RowDefinitions>
             <Grid.Resources>
                 <Style TargetType="TextBlock">
@@ -38,6 +38,8 @@
             <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Analysis}" />
             <TextBlock Grid.Row="4" Grid.Column="0" FontWeight="SemiBold" Text="Analyzers" />
             <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Analyzers}" />
+            <TextBlock Grid.Row="5" Grid.Column="0" FontWeight="SemiBold" Text="Timings" />
+            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Perf}" />
         </Grid>
 
         <DataGrid Grid.Row="1" x:Name="IssueGrid" ItemsSource="{Binding Issues}" AutoGenerateColumns="False" IsReadOnly="True"

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Threading;
 using Redline.App.Logging;
+using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
 using Redline.Core.Models;
 using Redline.Core.Pipeline;
@@ -20,11 +21,13 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
 {
     private const int MaxLogLines = 300;
     private readonly Dispatcher _ui;
+    private readonly PerfCounters _perfCounters;
 
     private string _surface = "No surface";
     private string _capabilities = string.Empty;
     private string _snapshot = string.Empty;
     private string _analysis = string.Empty;
+    private string _perf = string.Empty;
     private long _latestSnapshotVersion;
     private string? _surfaceId;
 
@@ -34,9 +37,11 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
         AnalysisPipeline pipeline,
         IssueCacheManager cache,
         IEnumerable<ITextAnalyzer> analyzers,
-        DiagnosticsLog log)
+        DiagnosticsLog log,
+        PerfCounters perf)
     {
         _ui = ui;
+        _perfCounters = perf;
 
         Analyzers = string.Join("   ", analyzers.Select(a => $"{a.Name}: {(a.IsAvailable ? "available" : "UNAVAILABLE")}"));
 
@@ -86,6 +91,14 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
     public string Capabilities { get => _capabilities; private set => Set(ref _capabilities, value); }
     public string Snapshot { get => _snapshot; private set => Set(ref _snapshot, value); }
     public string Analysis { get => _analysis; private set => Set(ref _analysis, value); }
+    public string Perf { get => _perf; private set => Set(ref _perf, value); }
+
+    /// <summary>Re-reads the timing counters (the window calls this on a timer while open).</summary>
+    public void RefreshPerf()
+    {
+        var summary = _perfCounters.Summary();
+        Perf = summary.Length == 0 ? "No samples yet" : $"p50/p95/max — {summary}";
+    }
 
     private void ShowResult(AnalysisResult r)
     {

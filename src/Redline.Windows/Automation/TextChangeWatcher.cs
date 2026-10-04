@@ -1,5 +1,7 @@
 using System.Windows.Automation;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
 
 namespace Redline.Windows.Automation;
@@ -23,6 +25,7 @@ public sealed class TextChangeWatcher : IDisposable
     private readonly AutomationElement _element;
     private readonly ITextSurfaceAdapter _adapter;
     private readonly ILogger _logger;
+    private readonly PerfCounters? _perf;
     private readonly Timer _pollTimer;
 
     private AutomationEventHandler? _textChangedHandler;
@@ -35,8 +38,9 @@ public sealed class TextChangeWatcher : IDisposable
     private volatile bool _eventsSeen;
     private long _lastReadMs;
 
-    public TextChangeWatcher(UiaDispatcher uia, AutomationElement element, ITextSurfaceAdapter adapter, ILogger logger)
+    public TextChangeWatcher(UiaDispatcher uia, AutomationElement element, ITextSurfaceAdapter adapter, ILogger logger, PerfCounters? perf = null)
     {
+        _perf = perf;
         _uia = uia;
         _element = element;
         _adapter = adapter;
@@ -100,7 +104,9 @@ public sealed class TextChangeWatcher : IDisposable
         {
             while (!_stopped && Interlocked.Exchange(ref _dirty, 0) == 1)
             {
+                var sw = Stopwatch.StartNew();
                 var text = await _adapter.ReadTextAsync().ConfigureAwait(false);
+                _perf?.Record("read", sw.Elapsed);
                 Interlocked.Exchange(ref _lastReadMs, Environment.TickCount64);
 
                 if (_stopped) return;

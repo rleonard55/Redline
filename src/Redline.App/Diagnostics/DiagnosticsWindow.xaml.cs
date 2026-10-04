@@ -25,7 +25,20 @@ public partial class DiagnosticsWindow : Window
             });
         };
         viewModel.Log.CollectionChanged += scroll;
-        Closed += (_, _) => viewModel.Log.CollectionChanged -= scroll;
+
+        viewModel.RefreshPerf();
+        var perfTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(2),
+        };
+        perfTimer.Tick += (_, _) => viewModel.RefreshPerf();
+        perfTimer.Start();
+
+        Closed += (_, _) =>
+        {
+            viewModel.Log.CollectionChanged -= scroll;
+            perfTimer.Stop();
+        };
     }
 
     private void IssueGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
