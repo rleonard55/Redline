@@ -30,7 +30,14 @@ try {
     git tag -a $tag -m "Redline $version"
     git push origin $tag
     $releaseArgs = @($tag, $msi, $notices, '--title', "Redline $version", '--verify-tag')
-    if ($Notes) { $releaseArgs += @('--notes', $Notes) } else { $releaseArgs += '--generate-notes' }
+    # Notes go through a file: PowerShell 5.1 doesn't escape embedded double quotes in native arguments,
+    # so --notes "...like "She go"..." reached gh cut off at the first quote (v0.7.0's notes).
+    $notesFile = $null
+    if ($Notes) {
+        $notesFile = Join-Path ([IO.Path]::GetTempPath()) "redline-notes-$version.md"
+        [IO.File]::WriteAllText($notesFile, $Notes, (New-Object Text.UTF8Encoding($false)))
+        $releaseArgs += @('--notes-file', $notesFile)
+    } else { $releaseArgs += '--generate-notes' }
     if ($Draft) { $releaseArgs += '--draft' }
     gh release create @releaseArgs
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE); tag $tag was pushed." }
@@ -38,6 +45,14 @@ try {
     # The updater trusts GitHub's asset digest; make sure it matches what was built here.
     $digest = gh release view $tag --json assets --jq ".assets[] | select(.name == \`"Redline-$version-x64.msi\`") | .digest"
     if ($digest -ne "sha256:$sha") { throw "Uploaded MSI digest '$digest' doesn't match the local build (sha256:$sha)." }
+    if ($notesFile) {
+        Remove-Item $notesFile -ErrorAction SilentlyContinue
+        [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+        $body = (gh release view $tag --json body --jq '.body' | Out-String).Trim()
+        if (($body -replace "`r", '') -ne ($Notes.Trim() -replace "`r", '')) {
+            Write-Warning "The published release notes differ from -Notes; check the release page."
+        }
+    }
     Write-Host "Released $tag (sha256 $sha)" -ForegroundColor Green
 }
 finally {
