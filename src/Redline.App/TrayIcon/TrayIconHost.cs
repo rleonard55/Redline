@@ -10,6 +10,9 @@ public sealed class TrayIconHost : IDisposable
 {
     private readonly Forms.NotifyIcon _icon;
     private readonly Forms.ToolStripMenuItem _pauseItem;
+    private readonly Forms.ToolStripMenuItem _updateItem;
+    private Action? _updateClick;
+    private Action? _balloonClick;
     private readonly Icon _activeIcon;
     private readonly Icon _pausedIcon;
 
@@ -22,7 +25,11 @@ public sealed class TrayIconHost : IDisposable
         _pauseItem = new Forms.ToolStripMenuItem("Pause");
         _pauseItem.Click += (_, _) => togglePause();
 
+        _updateItem = new Forms.ToolStripMenuItem { Visible = false, Font = new Font(Forms.Control.DefaultFont, FontStyle.Bold) };
+        _updateItem.Click += (_, _) => _updateClick?.Invoke();
+
         var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add(_updateItem);
         menu.Items.Add("Settings…", null, (_, _) => showSettings());
         menu.Items.Add("Diagnostics", null, (_, _) => showDiagnostics());
         menu.Items.Add(_pauseItem);
@@ -37,6 +44,13 @@ public sealed class TrayIconHost : IDisposable
             Visible = true,
         };
         _icon.DoubleClick += (_, _) => showDiagnostics();
+        _icon.BalloonTipClicked += (_, _) =>
+        {
+            var click = _balloonClick;
+            _balloonClick = null;
+            click?.Invoke();
+        };
+        _icon.BalloonTipClosed += (_, _) => _balloonClick = null;
     }
 
     /// <summary>Draws a squiggle on a rounded tile so no .ico asset is needed yet (Phase 5 adds branding).</summary>
@@ -83,9 +97,20 @@ public sealed class TrayIconHost : IDisposable
 
     private string _activeText = "Redline";
 
-    /// <summary>Shows a transient tray notification.</summary>
-    public void Notify(string message, bool isError = false) =>
+    /// <summary>Shows a transient tray notification; <paramref name="onClick"/> runs if the user clicks it.</summary>
+    public void Notify(string message, bool isError = false, Action? onClick = null)
+    {
+        _balloonClick = onClick;
         _icon.ShowBalloonTip(4000, "Redline", message, isError ? Forms.ToolTipIcon.Warning : Forms.ToolTipIcon.Info);
+    }
+
+    /// <summary>Shows (<paramref name="text"/> non-null) or hides the bold update item at the top of the menu.</summary>
+    public void SetUpdateItem(string? text, Action? onClick)
+    {
+        _updateItem.Text = text ?? string.Empty;
+        _updateItem.Visible = text is not null;
+        _updateClick = onClick;
+    }
 
     public void Dispose()
     {

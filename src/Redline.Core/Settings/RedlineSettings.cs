@@ -65,6 +65,9 @@ public sealed record GeneralSettings
     /// <summary>Show a small quick-fix pill when the mouse pointer rests on an underline.</summary>
     public bool HoverSuggestions { get; init; } = true;
 
+    /// <summary>Daily check of GitHub Releases for a newer version (installing always needs a click).</summary>
+    public bool CheckForUpdates { get; init; } = true;
+
     /// <summary>Detailed (debug-level) log files and periodic timing summaries. Still never document text.</summary>
     public bool DiagnosticsMode { get; init; } = false;
 }

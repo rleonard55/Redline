@@ -12,11 +12,13 @@ using Redline.App.Diagnostics;
 using Redline.App.Logging;
 using Redline.App.Settings;
 using Redline.App.TrayIcon;
+using Redline.App.Updates;
 using Redline.Core.Corrections;
 using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
 using Redline.Core.Pipeline;
 using Redline.Core.Settings;
+using Redline.Core.Updates;
 using Redline.Windows;
 using Redline.Windows.Automation;
 using Redline.Windows.Corrections;
@@ -38,9 +40,14 @@ public partial class App : Application
     private HotkeyManager? _hotkeys;
     private DiagnosticsLog? _log;
     private DispatcherTimer? _perfTimer;
+    private DispatcherTimer? _updateTimer;
+    private UpdateService? _updates;
+    private Version? _notifiedUpdate;
     private readonly Stopwatch _uptime = Stopwatch.StartNew();
 
     private static readonly TimeSpan PerfSummaryInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan FirstUpdateCheck = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(24);
 
     public static string Version { get; } =
         typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev";
@@ -154,6 +161,15 @@ public partial class App : Application
         _perfTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = PerfSummaryInterval };
         _perfTimer.Tick += (_, _) => LogPerfSummary();
 
+        _updates = _services.GetRequiredService<UpdateService>();
+        _updates.Changed += () => Dispatcher.BeginInvoke(OnUpdateChanged);
+        _updateTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = FirstUpdateCheck };
+        _updateTimer.Tick += (_, _) =>
+        {
+            _updateTimer.Interval = UpdateCheckInterval;
+            _ = _updates.CheckAsync();
+        };
+
         // Ctrl+Alt+. (the default) echoes the familiar Ctrl+. "quick fix" without shadowing it in VS Code/Office.
         _hotkeys = new HotkeyManager(() => _ = corrections.ShowForCaretAsync(), _logger);
         _hotkeys.ActiveChanged += active =>
@@ -187,6 +203,8 @@ public partial class App : Application
 
         if (e.Args.Contains("--diagnostics", StringComparer.OrdinalIgnoreCase))
             ShowDiagnostics();
+        if (e.Args.Contains("--settings", StringComparer.OrdinalIgnoreCase))
+            ShowSettings();
     }
 
     /// <summary>Applies settings at startup (<paramref name="old"/> null) and after each change. UI thread.</summary>
@@ -196,7 +214,10 @@ public partial class App : Application
 
         // Resuming schedules a focus evaluation, which must not happen before the tracker has started.
         if (old is null ? !s.General.Enabled : old.General.Enabled != s.General.Enabled)
+        {
             _services.GetRequiredService<SurfaceTracker>().SetPaused(!s.General.Enabled);
+            _logger?.LogInformation("Checking {State}", s.General.Enabled ? "resumed" : "paused");
+        }
         _tray.SetPaused(!s.General.Enabled);
         _services.GetRequiredService<IssueCacheManager>().SetWriting(s.Writing);
         _services.GetRequiredService<AnalysisPipeline>().Debounce = TimeSpan.FromMilliseconds(s.General.AnalysisDelayMs);
@@ -204,9 +225,16 @@ public partial class App : Application
         _services.GetRequiredService<OverlayManager>().HoverEnabled = s.General.HoverSuggestions;
 
         if (_log is not null) _log.FileLevel = s.General.DiagnosticsMode ? LogLevel.Debug : LogLevel.Information;
-        if (s.General.DiagnosticsMode) _perfTimer?.Start(); else _perfTimer?.Stop();
+        // Timers only start/stop on an actual change; Start() on a running timer would restart its interval.
         if (old is null ? s.General.DiagnosticsMode : old.General.DiagnosticsMode != s.General.DiagnosticsMode)
+        {
+            if (s.General.DiagnosticsMode) _perfTimer?.Start(); else _perfTimer?.Stop();
             _logger?.LogInformation("Diagnostics mode: {Enabled} (Redline {Version})", s.General.DiagnosticsMode, Version);
+        }
+        if (old is null || old.General.CheckForUpdates != s.General.CheckForUpdates)
+        {
+            if (s.General.CheckForUpdates) _updateTimer?.Start(); else _updateTimer?.Stop();
+        }
 
         // The settings window registers a new hotkey before saving it; this covers hand edits of settings.json.
         if (old is not null && old.General.Hotkey != s.General.Hotkey
@@ -239,6 +267,7 @@ public partial class App : Application
 
         services.AddSingleton(log);
         services.AddSingleton<PerfCounters>();
+        services.AddSingleton(sp => new UpdateService(Version, sp.GetRequiredService<ILogger<UpdateService>>()));
         services.AddLogging(b => b.ClearProviders().AddProvider(log).SetMinimumLevel(LogLevel.Debug));
 
         // Windows integration
@@ -350,6 +379,42 @@ public partial class App : Application
             settings.Update(st => st with { General = st.General with { StartWithWindows = registered } });
     }
 
+    /// <summary>Reflects the updater in the tray: a menu item while an update waits, and one notification per version.</summary>
+    private void OnUpdateChanged()
+    {
+        if (_updates is null || _tray is null) return;
+        var update = _updates.Update;
+        switch (_updates.State)
+        {
+            case UpdateState.Ready when update is not null:
+                _tray.SetUpdateItem($"Install Redline {update.Version}", InstallUpdate);
+                NotifyUpdateOnce(update, $"Redline {update.Version} is ready. Click to install it.", InstallUpdate);
+                break;
+            case UpdateState.Available when update is not null:
+                _tray.SetUpdateItem($"Get Redline {update.Version}…", () => OpenUrl(update.PageUrl));
+                NotifyUpdateOnce(update, $"Redline {update.Version} is available. Click to open the download page.", () => OpenUrl(update.PageUrl));
+                break;
+            case UpdateState.UpToDate:
+                _tray.SetUpdateItem(null, null);
+                break;
+        }
+    }
+
+    private void NotifyUpdateOnce(AvailableUpdate update, string message, Action onClick)
+    {
+        if (_notifiedUpdate == update.Version) return;
+        _notifiedUpdate = update.Version;
+        _tray?.Notify(message, false, onClick);
+    }
+
+    private void InstallUpdate()
+    {
+        if (_updates?.Install() != true)
+            _tray?.Notify("That update isn't available any more. Check again from Settings › About.", true);
+    }
+
+    public static void OpenUrl(Uri url) => Process.Start(new ProcessStartInfo(url.ToString()) { UseShellExecute = true });
+
     /// <summary>Timing summary (counts and milliseconds only).</summary>
     private void LogPerfSummary()
     {
@@ -384,7 +449,8 @@ public partial class App : Application
                 _services.GetRequiredService<IPersonalDictionary>(), _services.GetRequiredService<IgnoreList>(),
                 SpellAnalyzer.SupportedLanguages(), spelling?.LanguageTag,
                 _services.GetRequiredService<SecurityFilter>().BuiltInExclusions,
-                _log?.LogDirectory);
+                _log?.LogDirectory,
+                _services.GetRequiredService<UpdateService>());
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Show();
         }
@@ -415,6 +481,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _updateTimer?.Stop();
         _exitWait?.Unregister(null);
         _exitSignal?.Dispose();
         _perfTimer?.Stop();

@@ -34,6 +34,9 @@ foreach ($required in 'Redline.exe', 'harper_ffi.dll') {
     if (-not (Test-Path (Join-Path $publish $required))) { throw "$required is missing from the publish output." }
 }
 
+# Licenses of everything bundled (Harper and its crates, .NET); installed next to Redline.exe.
+& (Join-Path $PSScriptRoot 'make-notices.ps1') -PublishDir $publish
+
 Invoke-Step 'WiX build' {
     dotnet build (Join-Path $PSScriptRoot 'Redline.Installer.wixproj') -c Release "-p:PublishDir=$publish\" -o $artifacts --nologo @versionArgs
 }

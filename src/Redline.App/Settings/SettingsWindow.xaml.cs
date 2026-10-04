@@ -4,9 +4,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Redline.App.Corrections;
+using Redline.App.Updates;
 using Redline.Core.Corrections;
 using Redline.Core.Interfaces;
 using Redline.Core.Settings;
+using Redline.Core.Updates;
 
 namespace Redline.App.Settings;
 
@@ -24,14 +26,16 @@ public partial class SettingsWindow : Window
     private readonly string? _activeLanguage;
     private readonly IReadOnlyCollection<string> _builtInExclusions;
     private readonly string? _logDirectory;
+    private readonly UpdateService _updates;
     private bool _loading;
 
     public SettingsWindow(
         SettingsStore store, HotkeyManager hotkeys, IPersonalDictionary dictionary, IgnoreList ignores,
         IReadOnlyList<string> languages, string? activeLanguage, IReadOnlyCollection<string> builtInExclusions,
-        string? logDirectory)
+        string? logDirectory, UpdateService updates)
     {
         _logDirectory = logDirectory;
+        _updates = updates;
         _store = store;
         _hotkeys = hotkeys;
         _dictionary = dictionary;
@@ -47,6 +51,8 @@ public partial class SettingsWindow : Window
             ? "Redline is running from a build folder; signing in will start this copy until the setting is turned off."
             : string.Empty;
         LogsHint.Text = logDirectory ?? "Logging to files is unavailable.";
+        VersionText.Text = $"Redline {App.Version.Split('+')[0]}";
+        ShowUpdateState();
         LoadSettings(store.Current);
         LoadLists();
 
@@ -54,6 +60,8 @@ public partial class SettingsWindow : Window
         Action<RedlineSettings, RedlineSettings> settingsChanged = (_, updated) => Dispatcher.BeginInvoke(() => LoadSettings(updated));
         Action listsChanged = () => Dispatcher.BeginInvoke(LoadLists);
         Action<Hotkey?> hotkeyChanged = _ => Dispatcher.BeginInvoke(() => UpdateHotkeyHint(_store.Current));
+        Action updateChanged = () => Dispatcher.BeginInvoke(ShowUpdateState);
+        _updates.Changed += updateChanged;
         _store.Changed += settingsChanged;
         _dictionary.Changed += listsChanged;
         _ignores.Changed += listsChanged;
@@ -64,6 +72,7 @@ public partial class SettingsWindow : Window
             _dictionary.Changed -= listsChanged;
             _ignores.Changed -= listsChanged;
             _hotkeys.ActiveChanged -= hotkeyChanged;
+            _updates.Changed -= updateChanged;
             _hotkeys.Suspended = false;
         };
     }
@@ -85,6 +94,7 @@ public partial class SettingsWindow : Window
             StartupBox.IsChecked = s.General.StartWithWindows;
             HoverBox.IsChecked = s.General.HoverSuggestions;
             DiagnosticsBox.IsChecked = s.General.DiagnosticsMode;
+            UpdatesBox.IsChecked = s.General.CheckForUpdates;
 
             SpellingBox.IsChecked = s.Writing.Spelling;
             GrammarBox.IsChecked = s.Writing.Grammar;
@@ -112,6 +122,50 @@ public partial class SettingsWindow : Window
         bool enabled = EnabledBox.IsChecked == true, startup = StartupBox.IsChecked == true, hover = HoverBox.IsChecked == true;
         _store.Update(s => s with { General = s.General with { Enabled = enabled, StartWithWindows = startup, HoverSuggestions = hover } });
     }
+
+    // ---- About / updates ----
+
+    private void ShowUpdateState()
+    {
+        bool busy = _updates.State is UpdateState.Checking or UpdateState.Downloading;
+        CheckNowButton.IsEnabled = !busy && _updates.State != UpdateState.Ready;
+        InstallUpdateButton.Visibility = _updates.State == UpdateState.Ready ? Visibility.Visible : Visibility.Collapsed;
+        if (_updates.Update is { } u)
+            InstallUpdateButton.Content = $"Install {u.Version}";
+
+        var status = _updates.Status;
+        if (_updates.LastChecked is { } at && !busy)
+            status += (status.Length > 0 ? " " : string.Empty) + $"Last checked {at:g}.";
+        UpdateStatus.Text = status;
+    }
+
+    private void Updates_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        bool on = UpdatesBox.IsChecked == true;
+        _store.Update(s => s with { General = s.General with { CheckForUpdates = on } });
+    }
+
+    private void CheckNow_Click(object sender, RoutedEventArgs e) => _ = _updates.CheckAsync();
+
+    private void InstallUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_updates.Install())
+            UpdateStatus.Text = "That update isn't available any more. Check again.";
+    }
+
+    private void Notices_Click(object sender, RoutedEventArgs e)
+    {
+        // Installed copies ship the generated file; build-folder copies fall back to the repository.
+        var notices = Path.Combine(AppContext.BaseDirectory, "THIRD-PARTY-NOTICES.txt");
+        if (File.Exists(notices))
+            Process.Start(new ProcessStartInfo(notices) { UseShellExecute = true });
+        else
+            App.OpenUrl(new Uri($"https://github.com/{UpdateCatalog.Owner}/{UpdateCatalog.Repository}#license"));
+    }
+
+    private void GitHub_Click(object sender, RoutedEventArgs e) =>
+        App.OpenUrl(new Uri($"https://github.com/{UpdateCatalog.Owner}/{UpdateCatalog.Repository}"));
 
     // ---- Diagnostics ----
 

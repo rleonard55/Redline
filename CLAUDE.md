@@ -6,7 +6,7 @@ squiggles in a click-through overlay, and applies fixes by selecting the exact r
 `IMPLEMENTATION_PLAN.md` is the phase plan; `docs/compatibility.md` is the per-app evidence and the
 list of app quirks and how each is handled. Read both before changing behavior.
 
-## Status (2026-10-03)
+## Status (2026-10-04)
 
 | Phase | State | Commit |
 |---|---|---|
@@ -15,7 +15,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 2 Corrections (engine, popup, ignore/dictionary) | done | 830aaa4 |
 | 3 Inline squiggle overlay | done | 4a5bb77 |
 | 4 Compatibility hardening | done | 2fa0c5f, 02bbf49 |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done | 9a62723, 2ad6818, 52f4216, 5db7d84 |
+| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done (live checks pending) | 9a62723, 2ad6818, 52f4216, 5db7d84, (updater next commit) |
 | 6 Optional AI | not started | |
 
 ### Phase 5 — part 2 (done), how it fits together
@@ -71,11 +71,32 @@ list of app quirks and how each is handled. Read both before changing behavior.
   upgrade with startup turned off (stays off), uninstall while running (8 s, everything removed). Not tested: the
   interactive (non-/qn) install, which has no wizard UI — just the progress dialog.
 
+### Phase 5 — public repo, auto-update, notices (done)
+- Public repo: https://github.com/rleonard55/Redline (MIT). History was rewritten (2026-10-04) to the noreply
+  author `8695387+rleonard55@users.noreply.github.com`, which is set as this repo's `user.email`; never commit
+  with the Gmail address. Hashes above are post-rewrite.
+- Auto-update (`Core/Updates/UpdateCatalog` = parsing/version logic, tested; `App/Updates/UpdateService`):
+  GET api.github.com/repos/rleonard55/Redline/releases/latest 1 min after start, then every 24 h
+  (`General.CheckForUpdates`, default on; Settings > About has Check now / Install). 404 = no releases = up to date.
+  Installed copies download `Redline-X.Y.Z-x64.msi` to `%LOCALAPPDATA%\Redline\updates`, verify size + SHA-256
+  against GitHub's asset `digest` (no digest = refuse), then tray item + one notification per version; install
+  = `msiexec /i … /passive` (MSI exits us via --exit and relaunches). Build-folder copies only link to the release.
+- Releases: bump `<Version>` in Directory.Build.props, commit, push, then `installer/release.ps1` (clean+pushed
+  main, tag vX.Y.Z, build, `gh release create` with MSI + notices, verifies the uploaded digest). Ask the user
+  before publishing a release — it is public and every installed copy will offer it.
+- Third-party notices: `installer/make-notices.ps1` (run by build.ps1) writes THIRD-PARTY-NOTICES.txt into the
+  publish folder: Redline LICENSE, cargo-about output for all crates in harper_ffi.dll (`native/harper-ffi/about.toml`
+  + `about.hbs`; 4 MPL-2.0 crates get crates.io source links), .NET runtime + Windows Desktop license/notices
+  from the runtime packs named in Redline.deps.json. Needs `cargo install cargo-about --locked --features cli`.
+- Version 0.6.0 is the first public release: the user installed the 0.5.2 test MSI, so anything lower can't upgrade it.
+- Live e2e for Settings/tray: `tools/manual-tests/scripts/redline_settings_e2e.ps1` (pause via checkbox and tray
+  menu, hotkey capture with real keys + Reset, Run key on/off, diagnostics mode, About check). Needs no Redline
+  running; starts the build-folder exe with `--settings`.
+
 ### Phase 5 — next steps, in order
-1. Live check of the remaining part-2 items above (needs the user's running instance closed; ask first —
-   ending the process from a session may be blocked by auto mode, so ask the user to Exit from the tray).
-   Also part 3: Diagnostics tab toggle changes the file level, Timings row fills in, Open logs folder works.
-2. Auto-update — **needs the user's decision** on hosting (e.g. GitHub Releases).
+1. Run `redline_settings_e2e.ps1` (ask the user to Exit Redline from the tray first) and the updater against a
+   real release (needs the user's go-ahead to publish v0.6.0).
+2. Phase 5 wrap-up, then Phase 6 (optional AI) if wanted.
 
 Deferred (documented in docs/compatibility.md): VS Code editor support (needs a VS Code extension);
 multi-monitor / non-100% DPI is implemented but untested (user has one 100% monitor).

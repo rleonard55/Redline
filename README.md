@@ -6,7 +6,8 @@ with a click or a hotkey.
 
 Everything runs locally: spelling uses the Windows spell checker, grammar uses
 [Harper](https://github.com/Automattic/harper). No text leaves your machine, and Redline's logs never
-contain what you type.
+contain what you type. The only network request Redline makes is a daily check of this repository's
+releases for updates (Settings › About; it can be turned off).
 
 > **Status:** pre-release (0.x). It works day to day on the apps listed in
 > [docs/compatibility.md](docs/compatibility.md); expect rough edges elsewhere.
@@ -31,6 +32,9 @@ The installer isn't code-signed yet, so Windows SmartScreen may warn about it
 
 Requires Windows 10 (version 2004) or Windows 11, x64.
 
+Redline checks for new releases once a day. When one is out, it downloads the installer in the
+background, verifies its SHA-256 checksum, and offers it from the tray; it installs only when you click.
+
 ## Build from source
 
 Requires the .NET 9 SDK, and the Rust toolchain (MSVC) for the Harper grammar library.
@@ -42,7 +46,9 @@ dotnet test Redline.sln
 dotnet run --project src/Redline.App
 ```
 
-Build the installer with `powershell -ExecutionPolicy Bypass -File installer/build.ps1` (output in `artifacts/`).
+Build the installer with `powershell -ExecutionPolicy Bypass -File installer/build.ps1` (output in `artifacts/`;
+needs `cargo install cargo-about --locked --features cli` for the license notices). Publish a release with
+`installer/release.ps1` after bumping `<Version>` in `Directory.Build.props`.
 
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) describes the architecture; [CLAUDE.md](CLAUDE.md) holds
 the current status and working notes.
@@ -50,4 +56,5 @@ the current status and working notes.
 ## License
 
 MIT — see [LICENSE](LICENSE). Redline bundles [Harper](https://github.com/Automattic/harper)
-(Apache-2.0) and its Rust dependencies under their own licenses.
+(Apache-2.0), its Rust dependencies and the .NET runtime under their own licenses; the installer includes
+`THIRD-PARTY-NOTICES.txt` with all of them (also attached to each release, and under Settings › About).
