@@ -10,5 +10,11 @@ public interface ITextAnalyzer
     /// <summary>False when the analyzer's engine could not be loaded; the pipeline skips it.</summary>
     bool IsAvailable { get; }
 
+    /// <summary>
+    /// A supplementary analyzer only fills gaps: its issues are dropped where they overlap an issue
+    /// from a primary analyzer, so a word never carries two competing underlines.
+    /// </summary>
+    bool IsSupplementary => false;
+
     Task<IReadOnlyList<TextIssue>> AnalyzeAsync(TextAnalysisRequest request, CancellationToken ct);
 }

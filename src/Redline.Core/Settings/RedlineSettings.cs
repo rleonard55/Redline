@@ -79,6 +79,12 @@ public sealed record WritingSettings
 
     /// <summary>Style suggestions (wordiness, readability). Off by default: they're opinions, not errors.</summary>
     public bool StyleSuggestions { get; init; } = false;
+
+    /// <summary>
+    /// Extra grammar suggestions from the on-device GRMR-V3 model (downloaded on request). Off by
+    /// default: it needs a ~800 MB download and ~1 GB of memory while in use.
+    /// </summary>
+    public bool AiGrammar { get; init; } = false;
 }
 
 public sealed record ApplicationSettings

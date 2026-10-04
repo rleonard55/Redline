@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Redline.Analysis;
+using Redline.Analysis.Grmr;
 using Redline.Analysis.Harper;
 using Redline.Annotations;
 using Redline.App.Corrections;
@@ -43,6 +44,7 @@ public partial class App : Application
     private DispatcherTimer? _updateTimer;
     private UpdateService? _updates;
     private Version? _notifiedUpdate;
+    private ModelState _modelState;
     private readonly Stopwatch _uptime = Stopwatch.StartNew();
 
     private static readonly TimeSpan PerfSummaryInterval = TimeSpan.FromMinutes(5);
@@ -129,6 +131,13 @@ public partial class App : Application
         {
             if (s.Surface is null) pipeline.Clear();
         };
+
+        // The grammar model works in the background; re-run analysis when it has new suggestions.
+        var grmr = _services.GetRequiredService<GrmrAnalyzer>();
+        grmr.ResultsReady += pipeline.Refresh;
+        var models = _services.GetRequiredService<GrmrModelStore>();
+        _modelState = models.State;
+        models.Changed += () => Dispatcher.BeginInvoke(OnModelChanged);
 
         // Constructed now so it captures events from the start, even before the window opens.
         _services.GetRequiredService<DiagnosticsViewModel>();
@@ -220,6 +229,7 @@ public partial class App : Application
         }
         _tray.SetPaused(!s.General.Enabled);
         _services.GetRequiredService<IssueCacheManager>().SetWriting(s.Writing);
+        ApplyAiGrammar(old, s);
         _services.GetRequiredService<AnalysisPipeline>().Debounce = TimeSpan.FromMilliseconds(s.General.AnalysisDelayMs);
         _services.GetRequiredService<SecurityFilter>().SetUserExclusions(s.Applications.Excluded);
         _services.GetRequiredService<OverlayManager>().HoverEnabled = s.General.HoverSuggestions;
@@ -259,6 +269,26 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// Turning AI grammar on starts the model download if needed (the setting says it downloads), and
+    /// re-analyzes so suggestions appear without typing. At startup a missing model is not fetched
+    /// silently; Settings offers the download.
+    /// </summary>
+    private void ApplyAiGrammar(RedlineSettings? old, RedlineSettings s)
+    {
+        var services = _services!;
+        services.GetRequiredService<GrmrAnalyzer>().Enabled = s.Writing.AiGrammar;
+        if (old is null || old.Writing.AiGrammar == s.Writing.AiGrammar) return;
+
+        _logger?.LogInformation("AI grammar: {Enabled}", s.Writing.AiGrammar);
+        if (!s.Writing.AiGrammar) return;
+        var models = services.GetRequiredService<GrmrModelStore>();
+        if (models.State is ModelState.NotInstalled or ModelState.Failed)
+            models.StartDownload();
+        else
+            services.GetRequiredService<AnalysisPipeline>().Refresh();
+    }
+
     private static ServiceProvider ConfigureServices(DiagnosticsLog log)
     {
         var services = new ServiceCollection();
@@ -287,6 +317,15 @@ public partial class App : Application
         services.AddSingleton<ITextAnalyzer>(sp => new SpellAnalyzer(
             sp.GetRequiredService<IPersonalDictionary>(), sp.GetRequiredService<SettingsStore>().Current.General.Language, sp.GetRequiredService<ILogger<SpellAnalyzer>>()));
         services.AddSingleton<ITextAnalyzer>(sp => new HarperAnalyzer(sp.GetRequiredService<ILogger<HarperAnalyzer>>()));
+        services.AddSingleton(sp => new GrmrModelStore(GrmrModelStore.DefaultDirectory, Version, sp.GetRequiredService<ILogger<GrmrModelStore>>()));
+        services.AddSingleton(sp =>
+        {
+            var store = sp.GetRequiredService<GrmrModelStore>();
+            var llamaLogger = sp.GetRequiredService<ILogger<LlamaSentenceCorrector>>();
+            return new GrmrAnalyzer(() => store.InstalledPath, path => new LlamaSentenceCorrector(path, llamaLogger),
+                sp.GetRequiredService<ILogger<GrmrAnalyzer>>());
+        });
+        services.AddSingleton<ITextAnalyzer>(sp => sp.GetRequiredService<GrmrAnalyzer>());
         services.AddSingleton(sp => new AnalysisPipelineOptions
         {
             Debounce = TimeSpan.FromMilliseconds(sp.GetRequiredService<SettingsStore>().Current.General.AnalysisDelayMs),
@@ -380,6 +419,27 @@ public partial class App : Application
     }
 
     /// <summary>Reflects the updater in the tray: a menu item while an update waits, and one notification per version.</summary>
+    /// <summary>The grammar model finished downloading (or failed). UI thread.</summary>
+    private void OnModelChanged()
+    {
+        if (_services is null || _tray is null) return;
+        var models = _services.GetRequiredService<GrmrModelStore>();
+        var previous = _modelState;
+        _modelState = models.State;
+        if (previous == _modelState) return;
+
+        if (_modelState == ModelState.Installed && previous == ModelState.Downloading
+            && _services.GetRequiredService<SettingsStore>().Current.Writing.AiGrammar)
+        {
+            _tray.Notify("The AI grammar model is ready. Redline will now suggest grammar fixes it finds.", false);
+            _services.GetRequiredService<AnalysisPipeline>().Refresh();
+        }
+        else if (_modelState == ModelState.Failed)
+        {
+            _tray.Notify("The AI grammar model couldn't be downloaded. Try again from Settings > Writing.", true);
+        }
+    }
+
     private void OnUpdateChanged()
     {
         if (_updates is null || _tray is null) return;
@@ -450,7 +510,9 @@ public partial class App : Application
                 SpellAnalyzer.SupportedLanguages(), spelling?.LanguageTag,
                 _services.GetRequiredService<SecurityFilter>().BuiltInExclusions,
                 _log?.LogDirectory,
-                _services.GetRequiredService<UpdateService>());
+                _services.GetRequiredService<UpdateService>(),
+                _services.GetRequiredService<GrmrModelStore>(),
+                RemoveGrammarModelAsync);
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Show();
         }
@@ -458,6 +520,19 @@ public partial class App : Application
         {
             _settingsWindow.Activate();
         }
+    }
+
+    /// <summary>Turns AI grammar off, unloads the model and deletes it. False if the file couldn't be deleted.</summary>
+    private async Task<bool> RemoveGrammarModelAsync()
+    {
+        var services = _services!;
+        var settings = services.GetRequiredService<SettingsStore>();
+        if (settings.Current.Writing.AiGrammar)
+            settings.Update(st => st with { Writing = st.Writing with { AiGrammar = false } });
+        var grmr = services.GetRequiredService<GrmrAnalyzer>();
+        grmr.Enabled = false;
+        await grmr.ReleaseModelAsync();
+        return services.GetRequiredService<GrmrModelStore>().Remove();
     }
 
     private void ShowDiagnostics()

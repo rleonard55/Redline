@@ -119,6 +119,8 @@ public sealed class IssueCacheManager
             IssueCategory.Style => !writing.StyleSuggestions,
             _ => false,
         };
+        if (issue.Analyzer == AnalyzerNames.GrammarModel && !writing.AiGrammar)
+            return true;
         return categoryOff ||
                (issue.Category == IssueCategory.Spelling && _dictionary.Contains(issue.OriginalText)) ||
                _ignores.IsIgnored(issue);

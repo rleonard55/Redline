@@ -997,6 +997,15 @@ For each failing target application:
 
 > **Goal:** User-initiated AI rewriting via local or remote LLM providers.
 
+### 6.0 On-device AI grammar (added; done)
+
+Before the rewriting work below, Phase 6 gained an opt-in **AI grammar check**: GRMR-V3-G1B (Gemma 3 1B
+fine-tuned for grammar correction, Q4_K_M GGUF, downloaded on request and SHA-256 verified) runs in-process
+via LLamaSharp/llama.cpp on the CPU. It is a supplementary `ITextAnalyzer`: sentences are corrected in the
+background and cached, the model's rewrite is diffed into word-level issues (rewrites are rejected), and
+`AnalysisPipeline.Refresh()` re-publishes when results arrive. Nothing leaves the machine, so it needs none of
+the privacy controls below. Details in CLAUDE.md ("Phase 6 — AI grammar").
+
 ### 6.1 Deliverables
 
 | Component | Description |

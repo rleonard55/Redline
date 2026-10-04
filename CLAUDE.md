@@ -16,7 +16,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 3 Inline squiggle overlay | done | 4a5bb77 |
 | 4 Compatibility hardening | done | 2fa0c5f, 02bbf49 |
 | 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done; Settings/tray live checks pass | 9a62723, 2ad6818, 52f4216, 5db7d84, d53a042; release v0.6.0 |
-| 6 Optional AI | not started | |
+| 6 Optional AI | **in progress** — on-device AI grammar (GRMR-V3-G1B, opt-in) done; AI rewriting (6.1 plan) not started | (this session) |
 
 ### Phase 5 — part 2 (done), how it fits together
 - `App.ApplySettings(old, new)` applies everything at startup (`old` null) and on `SettingsStore.Changed`
@@ -95,6 +95,51 @@ list of app quirks and how each is handled. Read both before changing behavior.
   real tray menu in the hidden-icons overflow). Keep scripts ASCII-only: PowerShell 5.1 reads BOM-less .ps1 as
   ANSI, so build non-ASCII strings with `[char]0x2014` etc. Win11 tray buttons are named "<app> <tooltip>".
 
+### Light/dark theme (done)
+- Settings + Diagnostics windows: WPF Fluent theme, `ThemeMode = ThemeMode.System` set **per window** in the ctor
+  before `InitializeComponent` (experimental in .NET 9: `#pragma warning disable WPF0001`). Not app-wide, so the
+  overlay/pill/popup windows are untouched. Follows Windows live (WM_SETTINGCHANGE "ImmersiveColorSet").
+- Gotchas: an implicit style in Window.Resources with `BasedOn="{StaticResource {x:Type CheckBox}}"` resolves to
+  the *Aero* style (Fluent isn't merged yet at parse time) — don't add implicit control styles; set margins locally.
+  Fluent tab headers are wide and wrapped into rows, so Settings uses `TabStripPlacement="Left"`. Hint text uses
+  `{DynamicResource TextFillColorSecondaryBrush}`.
+- Flyouts: `Annotations/SystemTheme` reads HKCU `...\Themes\Personalize\AppsUseLightTheme`; `FlyoutPalette.Light/Dark`
+  (frozen brushes). `SuggestionPopup` sets `Flyout.*` DynamicResources per show; `HoverPill.ApplyPalette` per show.
+- Verified live 2026-10-04 (dark and light, incl. switching with Settings open; hover e2e passes in both).
+  `tools/manual-tests/scripts/shot_window.ps1` captures one window (DWM frame bounds, CAPTUREBLT).
+
+### Phase 6 — AI grammar with GRMR-V3-G1B (done, opt-in)
+- Model: qingy2024/GRMR-V3-G1B-GGUF **Q4_K_M** (806,056,704 bytes), URL pinned to commit 7d2aa920…, SHA-256
+  e01b82bf… (`Analysis.Grmr/GrmrModelStore.cs` `GrmrModel`). Prompt (from tokenizer_config.json):
+  `<start_of_turn>text\n{text}<end_of_turn>\n<start_of_turn>corrected\n`, BOS added by the tokenizer, stop at
+  `<end_of_turn>`, greedy (temp 0). Prototype: Q8_0 gave identical answers and was ~30% slower; ~0.4–1 s/sentence
+  with 4 threads; no changes to correct sentences; misses "Their going", "Me and him".
+- Runtime: LLamaSharp **0.25.0** + Backend.Cpu (0.26+ needs Microsoft.Extensions 10.x). The backend's native assets
+  are excluded (`ExcludeAssets="native"`) and the win-x64 tree is copied by hand in the csproj: a self-contained
+  RID publish otherwise flattens avx/avx2/avx512/noavx into one folder (NETSDK1152).
+- `GrmrAnalyzer` (supplementary `ITextAnalyzer`): never waits for the model. `AnalyzeAsync` splits sentences
+  (`Core/Text/SentenceSplitter`, <= 500 chars), returns cached results, and replaces the work queue with uncached
+  sentences (new/edited first, max 60). One background worker corrects them; when a sentence gets edits it raises
+  `ResultsReady` (throttled 1.5 s) -> `AnalysisPipeline.Refresh()` (re-runs the latest snapshot in full, bypassing
+  the unchanged-text shortcut). Model loads lazily, unloads after 10 idle minutes or when disabled; a load failure
+  sets `Failed` until restart. LRU cache of 4000 sentences.
+- `Core/Text/RewriteDiff`: token LCS -> word-level edits; drops whitespace-only edits and an added final period;
+  insertions attach to the neighbouring word; rejects rewrites (> 6 edits, > 50% of word chars changed, length
+  ratio outside 0.6–1.6). Issues: Analyzer "GRMR", RuleId "GRMR:Correction", Grammar/Punctuation category.
+- Pipeline: `ITextAnalyzer.IsSupplementary` — supplementary issues overlapping a primary issue are dropped
+  (so "tset" keeps the spelling squiggle). Known gap: that happens before user filters, so a hidden primary issue
+  still suppresses the model's.
+- Setting `Writing.AiGrammar` (default off). `IssueCacheManager` hides GRMR issues while it's off. Turning it on
+  starts the download (`App.ApplyAiGrammar`); at startup a missing model is never fetched silently. Settings >
+  Writing shows Download/Cancel/Remove + progress. Downloads resume from `.partial` (Range), 60 s stall timeout.
+- Tests: Core `GrammarModelTests.cs`, Analysis `GrmrTests.cs` (fake corrector + fake HTTP server).
+  Real model: `REDLINE_GRMR_MODEL=<path to gguf> dotnet test tests/Redline.Analysis.Tests --filter Integration`.
+  Live: `tools/manual-tests/scripts/redline_grmr_e2e.ps1` (needs the model + AiGrammar on; waits for the model's
+  underline on "go", applies "goes" and "was"->"were" via the pill).
+- Notices: `installer/licenses/*.txt` (LLamaSharp, llama.cpp, CommunityToolkit, dotnet/extensions; fetched from
+  upstream — the NuGet packages only carry a license expression) + a section on the model's licenses.
+  MSI grew to ~65 MB (local 0.7.0 build 2026-10-04).
+
 ### Phase 5 — next steps, in order
 1. Phase 5 wrap-up (it is functionally complete), then Phase 6 (optional AI) if the user wants it.
    Updater verified live 2026-10-04: installed 0.5.9 test build -> Settings > About > Check now found v0.6.0,
@@ -114,7 +159,8 @@ multi-monitor / non-100% DPI is implemented but untested (user has one 100% moni
   `Input/ClipboardScope`, `StartupRegistration`.
 - `src/Redline.Analysis` — `SpellAnalyzer` (COM `ISpellCheckerFactory`; KD-2 revised), `PersonalDictionary`.
 - `src/Redline.Analysis.Harper` + `native/harper-ffi` — Harper grammar via Rust cdylib (harper-core =2.11.0).
-- `src/Redline.Annotations` — `OverlayWindow`, `SquiggleLayer`, `OverlayManager`.
+- `src/Redline.Analysis.Grmr` — `GrmrAnalyzer`, `LlamaSentenceCorrector` (LLamaSharp), `GrmrModelStore`, `GrmrPrompt`.
+- `src/Redline.Annotations` — `OverlayWindow`, `SquiggleLayer`, `OverlayManager`, `HoverPill`, `SystemTheme`.
 - `src/Redline.App` — WPF tray host, DI, diagnostics window, `Settings/SettingsWindow`, `SuggestionPopup`,
   `CorrectionController`, `GlobalHotkey`, `HotkeyManager`.
 - `tools/Redline.CompatibilityHarness` — Phase 0 harness. `tools/manual-tests` — real-app probes and scripts (see its README).

@@ -1,5 +1,6 @@
 # Writes THIRD-PARTY-NOTICES.txt for a publish folder: Redline's license, Harper and every Rust crate
-# compiled into harper_ffi.dll (via cargo-about), and the bundled .NET runtime / Microsoft.Extensions.
+# compiled into harper_ffi.dll (via cargo-about), LLamaSharp + llama.cpp (installer/licenses, fetched from
+# upstream; their NuGet packages carry only a license expression), and the bundled .NET runtime / Microsoft.Extensions.
 # Usage: powershell -ExecutionPolicy Bypass -File installer/make-notices.ps1 -PublishDir artifacts\publish
 # Needs cargo-about: cargo install cargo-about --locked --features cli
 param([Parameter(Mandatory)][string]$PublishDir)
@@ -24,6 +25,14 @@ foreach ($target in $deps.targets.PSObject.Properties) {
 foreach ($name in 'Microsoft.NETCore.App.Runtime.win-x64', 'Microsoft.WindowsDesktop.App.Runtime.win-x64') {
     if (-not $packs[$name]) { throw "Runtime pack $name not found in Redline.deps.json (is the publish self-contained?)" }
 }
+# UTF-8 without BOM: Get-Content -Raw would read it as ANSI in PowerShell 5.1.
+function LicenseFile([string]$name) { [System.IO.File]::ReadAllText((Join-Path $root "installer\licenses\$name")) }
+function PackageVersion([string]$id) {
+    $lib = $deps.libraries.PSObject.Properties.Name | Where-Object { $_ -like "$id/*" } | Select-Object -First 1
+    if (-not $lib) { throw "$id not found in Redline.deps.json" }
+    return $lib.Split('/')[1]
+}
+
 function PackFile([string]$pack, [string]$version, [string[]]$names) {
     foreach ($n in $names) {
         $p = Join-Path $nuget (Join-Path $pack.ToLowerInvariant() (Join-Path $version $n))
@@ -59,7 +68,35 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine($rule)
 [void]$sb.AppendLine((Get-Content $rust -Raw))
 [void]$sb.AppendLine($rule)
-[void]$sb.AppendLine(".NET runtime $core (Microsoft.NETCore.App) and Microsoft.Extensions libraries")
+[void]$sb.AppendLine("LLamaSharp $(PackageVersion 'LLamaSharp') (LLamaSharp.dll), runtime for the optional AI grammar model")
+[void]$sb.AppendLine('https://github.com/SciSharp/LLamaSharp')
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine((LicenseFile 'LLamaSharp.txt'))
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine('llama.cpp / ggml (runtimes\win-x64\native\*\llama.dll, ggml*.dll), shipped in LLamaSharp.Backend.Cpu')
+[void]$sb.AppendLine('https://github.com/ggml-org/llama.cpp')
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine((LicenseFile 'llama.cpp.txt'))
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine("CommunityToolkit.HighPerformance $(PackageVersion 'CommunityToolkit.HighPerformance') (used by LLamaSharp)")
+[void]$sb.AppendLine('https://github.com/CommunityToolkit/dotnet')
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine((LicenseFile 'CommunityToolkit.txt'))
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine("Microsoft.Extensions.AI.Abstractions $(PackageVersion 'Microsoft.Extensions.AI.Abstractions') (used by LLamaSharp)")
+[void]$sb.AppendLine('https://github.com/dotnet/extensions')
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine((LicenseFile 'dotnet-extensions.txt'))
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine('GRMR-V3-G1B grammar model (not included; downloaded only if you turn on AI grammar)')
+[void]$sb.AppendLine('https://huggingface.co/qingy2024/GRMR-V3-G1B')
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine('The model is licensed under Apache-2.0 by its author. It is fine-tuned from Google''s Gemma 3 1B,')
+[void]$sb.AppendLine('so its use is also subject to the Gemma Terms of Use and Prohibited Use Policy:')
+[void]$sb.AppendLine('https://ai.google.dev/gemma/terms')
+[void]$sb.AppendLine()
+[void]$sb.AppendLine($rule)
+[void]$sb.AppendLine(".NET runtime $core (Microsoft.NETCore.App), Microsoft.Extensions and System.* libraries")
 [void]$sb.AppendLine('https://github.com/dotnet/runtime')
 [void]$sb.AppendLine($rule)
 [void]$sb.AppendLine((PackFile 'Microsoft.NETCore.App.Runtime.win-x64' $core 'LICENSE.TXT', 'LICENSE'))

@@ -19,5 +19,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Redline.Analysis\Redline.Analysis.csproj" />
     <ProjectReference Include="..\..\src\Redline.Analysis.Harper\Redline.Analysis.Harper.csproj" />
+    <ProjectReference Include="..\..\src\Redline.Analysis.Grmr\Redline.Analysis.Grmr.csproj" />
   </ItemGroup>
 </Project>

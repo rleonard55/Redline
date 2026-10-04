@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using Redline.Analysis.Grmr;
 using Redline.App.Corrections;
 using Redline.App.Updates;
 using Redline.Core.Corrections;
@@ -27,13 +28,18 @@ public partial class SettingsWindow : Window
     private readonly IReadOnlyCollection<string> _builtInExclusions;
     private readonly string? _logDirectory;
     private readonly UpdateService _updates;
+    private readonly GrmrModelStore _models;
+    private readonly Func<Task<bool>> _removeModel;
+    private string? _modelNote;
     private bool _loading;
 
     public SettingsWindow(
         SettingsStore store, HotkeyManager hotkeys, IPersonalDictionary dictionary, IgnoreList ignores,
         IReadOnlyList<string> languages, string? activeLanguage, IReadOnlyCollection<string> builtInExclusions,
-        string? logDirectory, UpdateService updates)
+        string? logDirectory, UpdateService updates, GrmrModelStore models, Func<Task<bool>> removeModel)
     {
+        _models = models;
+        _removeModel = removeModel;
         _logDirectory = logDirectory;
         _updates = updates;
         _store = store;
@@ -56,6 +62,7 @@ public partial class SettingsWindow : Window
         LogsHint.Text = logDirectory ?? "Logging to files is unavailable.";
         VersionText.Text = $"Redline {App.Version.Split('+')[0]}";
         ShowUpdateState();
+        ShowModelState();
         LoadSettings(store.Current);
         LoadLists();
 
@@ -64,7 +71,9 @@ public partial class SettingsWindow : Window
         Action listsChanged = () => Dispatcher.BeginInvoke(LoadLists);
         Action<Hotkey?> hotkeyChanged = _ => Dispatcher.BeginInvoke(() => UpdateHotkeyHint(_store.Current));
         Action updateChanged = () => Dispatcher.BeginInvoke(ShowUpdateState);
+        Action modelChanged = () => Dispatcher.BeginInvoke(ShowModelState);
         _updates.Changed += updateChanged;
+        _models.Changed += modelChanged;
         _store.Changed += settingsChanged;
         _dictionary.Changed += listsChanged;
         _ignores.Changed += listsChanged;
@@ -76,6 +85,7 @@ public partial class SettingsWindow : Window
             _ignores.Changed -= listsChanged;
             _hotkeys.ActiveChanged -= hotkeyChanged;
             _updates.Changed -= updateChanged;
+            _models.Changed -= modelChanged;
             _hotkeys.Suspended = false;
         };
     }
@@ -102,6 +112,7 @@ public partial class SettingsWindow : Window
             SpellingBox.IsChecked = s.Writing.Spelling;
             GrammarBox.IsChecked = s.Writing.Grammar;
             StyleBox.IsChecked = s.Writing.StyleSuggestions;
+            AiGrammarBox.IsChecked = s.Writing.AiGrammar;
 
             ExcludedList.ItemsSource = s.Applications.Excluded;
         }
@@ -312,14 +323,57 @@ public partial class SettingsWindow : Window
     private void Writing_Changed(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
-        var writing = new WritingSettings
+        bool spelling = SpellingBox.IsChecked == true, grammar = GrammarBox.IsChecked == true,
+            style = StyleBox.IsChecked == true, ai = AiGrammarBox.IsChecked == true;
+        // Turning AI grammar on starts the model download (App.ApplyAiGrammar).
+        _store.Update(s => s with
         {
-            Spelling = SpellingBox.IsChecked == true,
-            Grammar = GrammarBox.IsChecked == true,
-            StyleSuggestions = StyleBox.IsChecked == true,
-        };
-        _store.Update(s => s with { Writing = writing });
+            Writing = s.Writing with { Spelling = spelling, Grammar = grammar, StyleSuggestions = style, AiGrammar = ai },
+        });
     }
+
+    private void ShowModelState()
+    {
+        var state = _models.State;
+        ModelDownloadButton.Visibility = state is ModelState.NotInstalled or ModelState.Failed ? Visibility.Visible : Visibility.Collapsed;
+        ModelCancelButton.Visibility = state == ModelState.Downloading ? Visibility.Visible : Visibility.Collapsed;
+        ModelRemoveButton.Visibility = state == ModelState.Installed ? Visibility.Visible : Visibility.Collapsed;
+        ModelProgress.Visibility = state == ModelState.Downloading ? Visibility.Visible : Visibility.Collapsed;
+        ModelProgress.Value = _models.Progress;
+        ModelStatus.Text = _modelNote ?? state switch
+        {
+            ModelState.Downloading => $"Downloading{(char)0x2026} {_models.Progress:P0} of {_models.Size / 1_000_000} MB",
+            ModelState.Installed => $"Installed in {_models.Directory}",
+            ModelState.Failed => _models.Error ?? "The download failed.",
+            _ => "Not downloaded yet.",
+        };
+        _modelNote = null;
+    }
+
+    private void ModelDownload_Click(object sender, RoutedEventArgs e) => _models.StartDownload();
+
+    private void ModelCancel_Click(object sender, RoutedEventArgs e) => _models.CancelDownload();
+
+    private async void ModelRemove_Click(object sender, RoutedEventArgs e)
+    {
+        ModelRemoveButton.IsEnabled = false;
+        try
+        {
+            if (!await _removeModel())
+            {
+                _modelNote = "The model file is still in use. Try again in a moment.";
+                ShowModelState();
+            }
+        }
+        finally
+        {
+            ModelRemoveButton.IsEnabled = true;
+        }
+    }
+
+    private void ModelPage_Click(object sender, RoutedEventArgs e) => App.OpenUrl(new Uri(GrmrModel.ModelPage));
+
+    private void GemmaTerms_Click(object sender, RoutedEventArgs e) => App.OpenUrl(new Uri(GrmrModel.BaseModelTerms));
 
     // ---- Apps ----
 

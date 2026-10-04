@@ -65,13 +65,33 @@
             </TabItem>
 
             <TabItem Header="Writing">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="12">
                     <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6"
                                Text="Choose which kinds of issues are underlined." />
                     <CheckBox x:Name="SpellingBox" Margin="0,6,0,0" Content="Spelling" Checked="Writing_Changed" Unchecked="Writing_Changed" />
                     <CheckBox x:Name="GrammarBox" Margin="0,6,0,0" Content="Grammar and punctuation" Checked="Writing_Changed" Unchecked="Writing_Changed" />
                     <CheckBox x:Name="StyleBox" Margin="0,6,0,0" Content="Style suggestions (wordiness, readability)" Checked="Writing_Changed" Unchecked="Writing_Changed" />
+
+                    <TextBlock Style="{StaticResource Label}" Margin="0,24,0,4" Text="AI grammar check" />
+                    <CheckBox x:Name="AiGrammarBox" Margin="0" Content="Also check grammar with an AI model on this PC"
+                              Checked="Writing_Changed" Unchecked="Writing_Changed" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Catches errors the built-in rules miss, such as &quot;She go to school&quot;. The model runs entirely on this PC: your text never leaves it. It needs a one-time 806 MB download and about 1 GB of memory while in use (freed after 10 idle minutes). Its suggestions appear a moment after the others." />
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button x:Name="ModelDownloadButton" Content="Download model" Padding="10,2" Click="ModelDownload_Click" />
+                        <Button x:Name="ModelCancelButton" Content="Cancel download" Padding="10,2" Click="ModelCancel_Click" />
+                        <Button x:Name="ModelRemoveButton" Content="Remove model" Padding="10,2" Click="ModelRemove_Click" />
+                    </StackPanel>
+                    <ProgressBar x:Name="ModelProgress" Height="4" Margin="0,10,0,0" Maximum="1" Visibility="Collapsed" />
+                    <TextBlock x:Name="ModelStatus" Style="{StaticResource Hint}" Margin="0,6,0,0" />
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0">
+                        <Run Text="Model:" />
+                        <Hyperlink Click="ModelPage_Click">GRMR-V3-G1B</Hyperlink><Run Text=" (Apache-2.0), fine-tuned from Gemma 3 1B and subject to the" />
+                        <Hyperlink Click="GemmaTerms_Click">Gemma Terms of Use</Hyperlink><Run Text="." />
+                    </TextBlock>
                 </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
             <TabItem Header="Apps">

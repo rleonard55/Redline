@@ -48,6 +48,7 @@ public sealed class AnalysisPipeline : IDisposable
 
     private CancellationTokenSource _pendingCts = new();
     private bool _disposed;
+    private (TextSurfaceContext Surface, TextSnapshot Snapshot)? _latest; // guarded by _submitLock
 
     // Guarded by _runGate.
     private string? _lastSurfaceId;
@@ -80,7 +81,26 @@ public sealed class AnalysisPipeline : IDisposable
     private long _debounceTicks;
 
     /// <summary>Schedules analysis of <paramref name="snapshot"/>, superseding any pending request.</summary>
-    public void Submit(TextSurfaceContext surface, TextSnapshot snapshot)
+    public void Submit(TextSurfaceContext surface, TextSnapshot snapshot) => SubmitCore(surface, snapshot, force: false);
+
+    /// <summary>
+    /// Re-analyzes the latest submitted snapshot in full, even though its text hasn't changed: an
+    /// analyzer has new results for it (the grammar model finished in the background). Superseded
+    /// by any newer submit, like a normal run.
+    /// </summary>
+    public void Refresh()
+    {
+        (TextSurfaceContext Surface, TextSnapshot Snapshot)? latest;
+        lock (_submitLock)
+        {
+            if (_disposed) return;
+            latest = _latest;
+        }
+        if (latest is { } l)
+            SubmitCore(l.Surface, l.Snapshot, force: true);
+    }
+
+    private void SubmitCore(TextSurfaceContext surface, TextSnapshot snapshot, bool force)
     {
         CancellationToken token;
         lock (_submitLock)
@@ -89,9 +109,10 @@ public sealed class AnalysisPipeline : IDisposable
             _pendingCts.Cancel();
             _pendingCts = new CancellationTokenSource();
             token = _pendingCts.Token;
+            _latest = (surface, snapshot);
         }
 
-        _ = RunAsync(surface, snapshot, token);
+        _ = RunAsync(surface, snapshot, force, token);
     }
 
     /// <summary>Cancels pending work and forgets all analysis state (e.g. focus left any text surface).</summary>
@@ -104,6 +125,7 @@ public sealed class AnalysisPipeline : IDisposable
             _pendingCts.Cancel();
             _pendingCts = new CancellationTokenSource();
             token = _pendingCts.Token;
+            _latest = null;
         }
 
         _ = ClearStateAsync(token);
@@ -132,7 +154,7 @@ public sealed class AnalysisPipeline : IDisposable
         }
     }
 
-    private async Task RunAsync(TextSurfaceContext surface, TextSnapshot snapshot, CancellationToken token)
+    private async Task RunAsync(TextSurfaceContext surface, TextSnapshot snapshot, bool force, CancellationToken token)
     {
         try
         {
@@ -150,7 +172,7 @@ public sealed class AnalysisPipeline : IDisposable
 
         try
         {
-            var result = await AnalyzeAsync(surface, snapshot, token).ConfigureAwait(false);
+            var result = await AnalyzeAsync(surface, snapshot, force, token).ConfigureAwait(false);
             if (result is not null)
                 AnalysisCompleted?.Invoke(this, result);
         }
@@ -169,15 +191,15 @@ public sealed class AnalysisPipeline : IDisposable
     }
 
     /// <summary>Must be called while holding <c>_runGate</c>.</summary>
-    private async Task<AnalysisResult?> AnalyzeAsync(TextSurfaceContext surface, TextSnapshot snapshot, CancellationToken token)
+    private async Task<AnalysisResult?> AnalyzeAsync(TextSurfaceContext surface, TextSnapshot snapshot, bool force, CancellationToken token)
     {
         var text = snapshot.Text;
         bool sameSurface = _lastSurfaceId == surface.SurfaceId && _lastText is not null;
 
-        if (sameSurface && string.Equals(_lastText, text, StringComparison.Ordinal))
+        if (!force && sameSurface && string.Equals(_lastText, text, StringComparison.Ordinal))
             return null;
 
-        bool incremental = sameSurface && text.Length > _options.FullAnalysisMaxChars;
+        bool incremental = !force && sameSurface && text.Length > _options.FullAnalysisMaxChars;
         TextRange region = new(0, text.Length);
         TextRange oldRegion = new(0, _lastText?.Length ?? 0);
 
@@ -205,7 +227,7 @@ public sealed class AnalysisPipeline : IDisposable
 
         token.ThrowIfCancellationRequested();
 
-        var fresh = timed.SelectMany(t => t.Issues);
+        var fresh = MergeSupplementary(available, timed.Select(t => t.Issues).ToList());
         _issues = incremental
             ? _issues.Rebase(oldRegion, region.Length, fresh, snapshot.Version)
             : IssueSet.From(fresh, snapshot.Version);
@@ -220,6 +242,22 @@ public sealed class AnalysisPipeline : IDisposable
         return new AnalysisResult(
             surface, snapshot, _issues, region, incremental, sw.Elapsed,
             timed.ToDictionary(t => t.Name, t => t.Duration));
+    }
+
+    /// <summary>All primary issues, plus supplementary ones that don't overlap any primary issue.</summary>
+    private static List<TextIssue> MergeSupplementary(List<ITextAnalyzer> analyzers, List<IReadOnlyList<TextIssue>> results)
+    {
+        var primary = new List<TextIssue>();
+        var supplementary = new List<TextIssue>();
+        for (int i = 0; i < analyzers.Count; i++)
+            (analyzers[i].IsSupplementary ? supplementary : primary).AddRange(results[i]);
+
+        foreach (var issue in supplementary)
+        {
+            if (!primary.Any(p => p.Range.IntersectsWith(issue.Range)))
+                primary.Add(issue);
+        }
+        return primary;
     }
 
     private async Task<(string Name, IReadOnlyList<TextIssue> Issues, TimeSpan Duration)> RunAnalyzerAsync(

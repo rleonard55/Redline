@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Redline.Analysis.Grmr</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 0.25 is the newest LLamaSharp on Microsoft.Extensions 9.x (0.26+ moves to 10.x). The CPU backend
+         ships llama.cpp for noavx/avx/avx2/avx512 (~17 MB); LLamaSharp picks the best one at load. -->
+    <PackageReference Include="LLamaSharp" Version="0.25.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.25.0" ExcludeAssets="native" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <!-- A RID-specific (self-contained) publish flattens runtimes/win-x64/native/<variant>/*.dll into one folder,
+       where the four CPU variants collide (NETSDK1152). Copy the win-x64 tree ourselves, keeping the layout
+       LLamaSharp searches (runtimes/win-x64/native/avx2/llama.dll, ...). -->
+  <ItemGroup>
+    <None Include="$(PkgLLamaSharp_Backend_Cpu)\runtimes\win-x64\native\**\*.dll"
+          Link="runtimes\win-x64\native\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Redline.Analysis.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Redline.Core\Redline.Core.csproj" />
+  </ItemGroup>
+</Project>
