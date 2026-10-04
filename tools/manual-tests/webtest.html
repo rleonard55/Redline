@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Redline web test</title>
+<style>
+  body { font: 18px/1.5 "Segoe UI", sans-serif; margin: 24px; max-width: 760px; }
+  label { display: block; margin-top: 14px; font-size: 13px; color: #555; }
+  textarea, input, .ce { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border: 1px solid #999; border-radius: 4px; }
+  textarea { height: 70px; }
+  .ce { min-height: 40px; }
+</style>
+</head>
+<body>
+  <label for="ta">textarea</label>
+  <textarea id="ta">The textarea has an tset of the the editor.</textarea>
+
+  <label for="inp">input type=text</label>
+  <input id="inp" type="text" value="An input with a mispeled word">
+
+  <label for="ph">empty input with placeholder (should be ignored)</label>
+  <input id="ph" type="text" placeholder="Type a mesage heer">
+
+  <label>plain contenteditable</label>
+  <div id="ce" class="ce" contenteditable="true">We recieved teh package yesterday.</div>
+
+  <label>rich contenteditable with an image before the text</label>
+  <div id="rich" class="ce" contenteditable="true"><b>Bold</b> first line<br><img alt="logo" width="40" height="20" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='20'%3E%3Crect width='40' height='20' fill='%23c42b1c'/%3E%3C/svg%3E"><br>After the image: Thsi is an tset.</div>
+
+  <label>focusable but NOT editable div (must be ignored)</label>
+  <div id="card" tabindex="0" style="border:1px dashed #999;padding:6px">A focusable card with a mispeled word.</div>
+
+  <label for="pw">password (must be blocked)</label>
+  <input id="pw" type="password" value="hunter2">
+</body>
+</html>
