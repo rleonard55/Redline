@@ -15,8 +15,8 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 2 Corrections (engine, popup, ignore/dictionary) | done | 830aaa4 |
 | 3 Inline squiggle overlay | done | 4a5bb77 |
 | 4 Compatibility hardening | done | 2fa0c5f, 02bbf49 |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done; Settings/tray live checks pass | 9a62723, 2ad6818, 52f4216, 5db7d84, d53a042; release v0.6.0 |
-| 6 Optional AI | **in progress** — on-device AI grammar (GRMR-V3-G1B, opt-in) done; AI rewriting (6.1 plan) not started | (this session) |
+| 5 Product hardening | **done** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done; Settings/tray live checks pass; plan-gap review closed (compatibility record, perf rates, overlay tests, CI) | 9a62723, 2ad6818, 52f4216, 5db7d84, d53a042, 3b5fa45, db1e863; releases v0.6.0, v0.7.0 |
+| 6 Optional AI | on-device AI grammar (GRMR-V3-G1B, opt-in) done; AI rewriting (6.1) **on hold** by the owner's choice | 3e6a44e; release v0.7.0 |
 
 ### Phase 5 — part 2 (done), how it fits together
 - `App.ApplySettings(old, new)` applies everything at startup (`old` null) and on `SettingsStore.Changed`
