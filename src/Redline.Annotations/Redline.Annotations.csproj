@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Redline.Annotations.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Redline.Core\Redline.Core.csproj" />
     <ProjectReference Include="..\Redline.Windows\Redline.Windows.csproj" />
   </ItemGroup>

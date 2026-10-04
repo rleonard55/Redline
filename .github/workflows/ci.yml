@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      # Harper grammar (native/harper-ffi): the Harper analyzer tests need harper_ffi.dll.
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --target x86_64-pc-windows-msvc
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/harper-ffi/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('native/harper-ffi/Cargo.lock') }}
+
+      - name: Build harper_ffi
+        working-directory: native/harper-ffi
+        run: cargo build --release --locked
+
+      - name: Test harper_ffi
+        working-directory: native/harper-ffi
+        run: cargo test --release --locked
+
+      - name: Build
+        run: dotnet build Redline.sln -c Release
+
+      # Interactive tests (REDLINE_INTERACTIVE_TESTS) and the real-model test (REDLINE_GRMR_MODEL) skip themselves.
+      - name: Test
+        run: dotnet test Redline.sln -c Release --no-build --logger "trx;LogFilePrefix=results" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx

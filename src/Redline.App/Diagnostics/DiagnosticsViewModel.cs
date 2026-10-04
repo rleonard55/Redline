@@ -102,7 +102,7 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
     {
         RefreshAnalyzers(); // the AI grammar model comes and goes with its setting and download
         var summary = _perfCounters.Summary();
-        Perf = summary.Length == 0 ? "No samples yet" : $"p50/p95/max — {summary}";
+        Perf = (summary.Length == 0 ? "No samples yet" : $"p50/p95/max — {summary}") + Environment.NewLine + ResourceUsage.Current();
     }
 
     private void RefreshAnalyzers() =>

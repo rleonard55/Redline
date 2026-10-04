@@ -14,6 +14,7 @@ namespace Redline.Annotations;
 /// <remarks>
 /// Z-order: placed immediately above the target window rather than topmost. Anything that later
 /// covers the target (another app, the target's own menus and dropdowns) covers the squiggles too.
+/// A topmost ("always on top") target gets a topmost overlay, again directly above it.
 /// Deliberately not made an owned window of the target: cross-process ownership attaches the two
 /// processes' input queues, so a hung target could hang Redline.
 /// </remarks>
@@ -57,12 +58,16 @@ internal sealed class OverlayWindow : Window
             Show(); // creates the HWND off-screen; ShowActivated=false keeps focus where it is
         }
 
+        int x = (int)Math.Round(screenRect.Left), y = (int)Math.Round(screenRect.Top);
+        int w = Math.Max(1, (int)Math.Round(screenRect.Width)), h = Math.Max(1, (int)Math.Round(screenRect.Height));
         var insertAfter = InsertAfterFor(target, out bool keepZOrder);
         uint flags = SWP_NOACTIVATE | SWP_SHOWWINDOW | (keepZOrder ? SWP_NOZORDER : 0);
-        SetWindowPos(_hwnd, insertAfter,
-            (int)Math.Round(screenRect.Left), (int)Math.Round(screenRect.Top),
-            Math.Max(1, (int)Math.Round(screenRect.Width)), Math.Max(1, (int)Math.Round(screenRect.Height)),
-            flags);
+        SetWindowPos(_hwnd, insertAfter, x, y, w, h, flags);
+
+        // Moving onto a monitor with another scale sends WM_DPICHANGED during the call, and WPF answers
+        // by resizing the window to its own suggested rectangle. Put it back: this time no DPI changes.
+        if (GetWindowRect(_hwnd, out var actual) && (actual.Left != x || actual.Top != y || actual.Right - actual.Left != w || actual.Bottom - actual.Top != h))
+            SetWindowPos(_hwnd, IntPtr.Zero, x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
 
         // Read DPI after positioning: moving onto another monitor may have changed it.
         _layer.Update(spans, VisualTreeHelper.GetDpi(this).DpiScaleX);
@@ -81,6 +86,12 @@ internal sealed class OverlayWindow : Window
     private IntPtr InsertAfterFor(IntPtr target, out bool keepZOrder)
     {
         keepZOrder = false;
+        bool targetTopmost = IsTopmost(target);
+
+        // Leaving a topmost target: drop out of the topmost band first (HWND_TOP would keep us in it).
+        if (!targetTopmost && IsTopmost(_hwnd))
+            SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
         var above = GetWindow(target, GW_HWNDPREV);
         if (above == _hwnd)
         {
@@ -88,13 +99,22 @@ internal sealed class OverlayWindow : Window
             return IntPtr.Zero;
         }
 
+        if (targetTopmost)
+        {
+            // Everything above a topmost window is topmost too, so inserting after it makes the overlay
+            // topmost and leaves it directly above the target.
+            return above == IntPtr.Zero ? HWND_TOPMOST : above;
+        }
+
         // Target is the top non-topmost window (the usual case: it's the foreground app). HWND_TOP
         // puts the overlay at the top of the non-topmost band, i.e. right above it. Never insert
         // after a topmost window: that would make the overlay topmost too.
-        if (above == IntPtr.Zero || (GetWindowLongPtr(above, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) != 0)
+        if (above == IntPtr.Zero || IsTopmost(above))
             return HWND_TOP;
         return above;
     }
+
+    private static bool IsTopmost(IntPtr hwnd) => (GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) != 0;
 
     private const int GWL_EXSTYLE = -20;
     private const long WS_EX_TOPMOST = 0x00000008;
@@ -104,14 +124,21 @@ internal sealed class OverlayWindow : Window
     private const long WS_EX_NOACTIVATE = 0x08000000;
     private const uint GW_HWNDPREV = 3;
     private const int SW_HIDE = 0;
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOZORDER = 0x0004;
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_SHOWWINDOW = 0x0040;
     private static readonly IntPtr HWND_TOP = IntPtr.Zero;
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private static readonly IntPtr HWND_NOTOPMOST = new(-2);
+
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 }

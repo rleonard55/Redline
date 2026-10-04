@@ -32,10 +32,30 @@ public sealed class PerfCounters
     /// <summary>One line: "name p50/p95/max ms (n=…)" per counter, or an empty string.</summary>
     public string Summary() => string.Join("; ", Snapshot());
 
+    /// <summary>Total samples per counter so far (for <see cref="Rates"/>).</summary>
+    public IReadOnlyDictionary<string, long> Counts() =>
+        _series.ToDictionary(kv => kv.Key, kv => kv.Value.Count, StringComparer.Ordinal);
+
+    /// <summary>
+    /// "name 12.0/min; …" for counters that recorded samples between two <see cref="Counts"/> calls
+    /// <paramref name="elapsed"/> apart, or an empty string.
+    /// </summary>
+    public static string Rates(IReadOnlyDictionary<string, long> before, IReadOnlyDictionary<string, long> after, TimeSpan elapsed)
+    {
+        if (elapsed <= TimeSpan.Zero) return string.Empty;
+        return string.Join("; ", after
+            .Select(kv => (kv.Key, Delta: kv.Value - before.GetValueOrDefault(kv.Key)))
+            .Where(x => x.Delta > 0)
+            .OrderBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => FormattableString.Invariant($"{x.Key} {x.Delta / elapsed.TotalMinutes:F1}/min")));
+    }
+
     private sealed class Series
     {
         private readonly double[] _samples = new double[Window];
         private long _count;
+
+        public long Count { get { lock (_samples) return _count; } }
 
         public void Add(double ms)
         {
