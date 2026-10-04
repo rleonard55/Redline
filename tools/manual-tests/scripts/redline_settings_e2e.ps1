@@ -23,6 +23,7 @@ public static class K {
 "@
 
 $AE = [System.Windows.Automation.AutomationElement]
+$dash = [string][char]0x2014  # kept out of the source: PowerShell 5.1 reads BOM-less scripts as ANSI
 $results = New-Object System.Collections.Generic.List[string]
 function Check([string]$name, [bool]$ok, [string]$detail = '') {
     $line = ('{0} {1}{2}' -f ($(if ($ok) { 'PASS' } else { 'FAIL' })), $name, $(if ($detail) { " - $detail" } else { '' }))
@@ -68,7 +69,7 @@ $win = $null
 WaitFor { $script:win = $AE::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children,
     (New-Object System.Windows.Automation.AndCondition(
         (New-Object System.Windows.Automation.PropertyCondition($AE::ProcessIdProperty, $proc.Id)),
-        (New-Object System.Windows.Automation.PropertyCondition($AE::NameProperty, 'Redline — Settings'))))); $null -ne $script:win } 15000 | Out-Null
+        (New-Object System.Windows.Automation.PropertyCondition($AE::NameProperty, "Redline $dash Settings"))))); $null -ne $script:win } 15000 | Out-Null
 if (-not $win) { throw 'Settings window did not appear.' }
 Start-Sleep 2
 $hwnd = [IntPtr]$win.Current.NativeWindowHandle
@@ -98,7 +99,10 @@ try {
     $t = Get-Date; Invoke (ByName $win 'Reset')
     Check 'hotkey reset' ((WaitFor { (Settings).general.hotkey -eq 'Ctrl+Alt+.' }) -and (WaitFor { LogSince $t | Select-String 'Suggestion hotkey: Ctrl\+Alt\+\.' }))
 
-    # 3. Start with Windows writes and removes the Run value for this exe
+    # 3. Start with Windows writes and removes the Run value for this exe. The box mirrors the Run key at
+    #    startup, so an existing entry (e.g. from an installed copy) shows as checked: clear it first.
+    SetToggle (ById $win 'StartupBox') $false
+    WaitFor { -not (RunValue) } | Out-Null
     SetToggle (ById $win 'StartupBox') $true
     Check 'start with Windows on' (WaitFor { (RunValue) -eq "`"$exePath`"" }) "run=[$(RunValue)]"
     SetToggle (ById $win 'StartupBox') $false
@@ -118,14 +122,27 @@ try {
     $statusOk = WaitFor { (ById $win 'UpdateStatus').Current.Name -match 'up to date|available|ready|Couldn' } 20000
     Check 'about: check for updates' $statusOk "$version; status='$((ById $win 'UpdateStatus').Current.Name)'"
 
-    # 6. Pause from the real tray menu (needs the icon visible on the taskbar, not in the overflow)
-    $tray = $AE::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-        (New-Object System.Windows.Automation.PropertyCondition($AE::NameProperty, 'Redline — Ctrl+Alt+. for suggestions')))
+    # 6. Pause from the real tray menu; opens the hidden-icons overflow first if the icon lives there
+    $trayName = "Redline $dash Ctrl+Alt+. for suggestions"
+    # Windows 11 names tray buttons "<app> <tooltip>" (class SystemTray.NormalButton); the chevron is
+    # "Show Hidden Icons" (+ " Hide" while the overflow is open).
+    $trayButtons = { $AE::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition($AE::ClassNameProperty, 'SystemTray.NormalButton'))) }
+    $findTray = { & $trayButtons | Where-Object { $_.Current.Name -like "*$trayName" } | Select-Object -First 1 }
+    $tray = & $findTray
     if (-not $tray -or $tray.Current.IsOffscreen) {
-        Check 'tray pause' $false 'icon not visible on the taskbar (in the overflow?); skipped'
+        $chevron = & $trayButtons | Where-Object { $_.Current.Name -like 'Show Hidden Icons*' } | Select-Object -First 1
+        if ($chevron) {
+            Invoke $chevron
+            WaitFor { $t2 = & $findTray; $t2 -and -not $t2.Current.IsOffscreen } 3000 | Out-Null
+            $tray = & $findTray
+        }
+    }
+    if (-not $tray -or $tray.Current.IsOffscreen) {
+        Check 'tray pause' $false 'tray icon not found, even in the hidden-icons overflow; skipped'
     } else {
         $r = $tray.Current.BoundingRectangle
-        [K]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)); Start-Sleep -Milliseconds 200
+        [void][K]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)); Start-Sleep -Milliseconds 200
         [K]::RightClick()
         $pause = $null
         WaitFor { $script:pause = $AE::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
@@ -136,11 +153,12 @@ try {
             Check 'tray pause' $false 'tray menu did not open in front'
             [K]::Down(0x1B); [K]::Up(0x1B)
         } else {
+            SelectTab $win 'General' # the checkbox is only in the UIA tree while its tab is shown
             $t = Get-Date; Invoke $pause
             $paused = (WaitFor { -not (Settings).general.enabled }) -and (WaitFor { LogSince $t | Select-String 'Checking paused' })
             $boxOff = WaitFor { (ById $win 'EnabledBox').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState.ToString() -eq 'Off' }
             Check 'tray pause (settings window follows)' ($paused -and $boxOff)
-            SelectTab $win 'General'; SetToggle (ById $win 'EnabledBox') $true
+            SetToggle (ById $win 'EnabledBox') $true
             Check 'resume after tray pause' (WaitFor { (Settings).general.enabled })
         }
     }

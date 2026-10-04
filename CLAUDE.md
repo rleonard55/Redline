@@ -15,7 +15,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 2 Corrections (engine, popup, ignore/dictionary) | done | 830aaa4 |
 | 3 Inline squiggle overlay | done | 4a5bb77 |
 | 4 Compatibility hardening | done | 2fa0c5f, 02bbf49 |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done (live checks pending) | 9a62723, 2ad6818, 52f4216, 5db7d84, (updater next commit) |
+| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done; Settings/tray live checks pass | 9a62723, 2ad6818, 52f4216, 5db7d84, d53a042 |
 | 6 Optional AI | not started | |
 
 ### Phase 5 — part 2 (done), how it fits together
@@ -91,11 +91,13 @@ list of app quirks and how each is handled. Read both before changing behavior.
 - Version 0.6.0 is the first public release: the user installed the 0.5.2 test MSI, so anything lower can't upgrade it.
 - Live e2e for Settings/tray: `tools/manual-tests/scripts/redline_settings_e2e.ps1` (pause via checkbox and tray
   menu, hotkey capture with real keys + Reset, Run key on/off, diagnostics mode, About check). Needs no Redline
-  running; starts the build-folder exe with `--settings`.
+  running; starts the build-folder exe with `--settings`. **11/11 passed 2026-10-04** (incl. tray Pause via the
+  real tray menu in the hidden-icons overflow). Keep scripts ASCII-only: PowerShell 5.1 reads BOM-less .ps1 as
+  ANSI, so build non-ASCII strings with `[char]0x2014` etc. Win11 tray buttons are named "<app> <tooltip>".
 
 ### Phase 5 — next steps, in order
-1. Run `redline_settings_e2e.ps1` (ask the user to Exit Redline from the tray first) and the updater against a
-   real release (needs the user's go-ahead to publish v0.6.0).
+1. Verify the updater against a real release: v0.6.0 published 2026-10-04 (user approved); the user installs it by
+   hand (their 0.5.2 test install has no updater), then the next release exercises download + install.
 2. Phase 5 wrap-up, then Phase 6 (optional AI) if wanted.
 
 Deferred (documented in docs/compatibility.md): VS Code editor support (needs a VS Code extension);
