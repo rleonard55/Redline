@@ -45,6 +45,10 @@ public partial class App : Application
     private UpdateService? _updates;
     private Version? _notifiedUpdate;
     private ModelState _modelState;
+    private DispatcherTimer? _compatibilityTimer;
+    private readonly Dictionary<int, string?> _appVersions = new();
+    private IReadOnlyDictionary<string, long> _lastPerfCounts = new Dictionary<string, long>();
+    private DateTime _lastPerfAt = DateTime.UtcNow;
     private readonly Stopwatch _uptime = Stopwatch.StartNew();
 
     private static readonly TimeSpan PerfSummaryInterval = TimeSpan.FromMinutes(5);
@@ -131,6 +135,19 @@ public partial class App : Application
         {
             if (s.Surface is null) pipeline.Clear();
         };
+
+        // Per-app compatibility record (local only; Settings > Compatibility). Identity and counts, never text.
+        var compatibility = _services.GetRequiredService<CompatibilityLog>();
+        tracker.SurfaceChanged += (_, s) =>
+        {
+            if (s.Surface is { } surface && s.Capabilities is { } caps)
+                compatibility.Attached(surface, caps, AppVersionOf(surface.ProcessId));
+        };
+        tracker.SnapshotChanged += (_, s) => compatibility.TextRead(s.Surface, s.Snapshot.Length == 0);
+        tracker.SurfaceBlocked += (_, b) => compatibility.Blocked(b.ProcessName, b.ControlType, b.ClassName, b.FrameworkId, b.Reason);
+        _compatibilityTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMinutes(1) };
+        _compatibilityTimer.Tick += (_, _) => compatibility.Save();
+        _compatibilityTimer.Start();
 
         // The grammar model works in the background; re-run analysis when it has new suggestions.
         var grmr = _services.GetRequiredService<GrmrAnalyzer>();
@@ -297,6 +314,7 @@ public partial class App : Application
 
         services.AddSingleton(log);
         services.AddSingleton<PerfCounters>();
+        services.AddSingleton(sp => new CompatibilityLog(CompatibilityLog.DefaultPath, Version.Split('+')[0], sp.GetRequiredService<ILogger<CompatibilityLog>>()));
         services.AddSingleton(sp => new UpdateService(Version, sp.GetRequiredService<ILogger<UpdateService>>()));
         services.AddLogging(b => b.ClearProviders().AddProvider(log).SetMinimumLevel(LogLevel.Debug));
 
@@ -338,7 +356,8 @@ public partial class App : Application
         // Corrections
         services.AddSingleton(sp => new ReplacementEngine(
             sp.GetRequiredService<UiaDispatcher>(), sp.GetRequiredService<DocumentState>(),
-            new ReplacementOptions(), sp.GetRequiredService<ILogger<ReplacementEngine>>(), sp.GetRequiredService<PerfCounters>()));
+            new ReplacementOptions(), sp.GetRequiredService<ILogger<ReplacementEngine>>(), sp.GetRequiredService<PerfCounters>(),
+            sp.GetRequiredService<CompatibilityLog>()));
         services.AddSingleton<CorrectionController>();
 
         // Annotations
@@ -346,7 +365,8 @@ public partial class App : Application
         services.AddSingleton(sp => new OverlayManager(
             Current.Dispatcher, sp.GetRequiredService<SurfaceTracker>(), sp.GetRequiredService<DocumentState>(),
             sp.GetRequiredService<IssueCacheManager>(), sp.GetRequiredService<WindowEventMonitor>(),
-            sp.GetRequiredService<ILogger<OverlayManager>>(), sp.GetRequiredService<PerfCounters>()));
+            sp.GetRequiredService<ILogger<OverlayManager>>(), sp.GetRequiredService<PerfCounters>(),
+            sp.GetRequiredService<CompatibilityLog>()));
 
         // UI
         services.AddSingleton(sp => new DiagnosticsViewModel(
@@ -419,6 +439,30 @@ public partial class App : Application
     }
 
     /// <summary>Reflects the updater in the tray: a menu item while an update waits, and one notification per version.</summary>
+    /// <summary>
+    /// The target app's product version (e.g. Teams 25.x), for retesting the same build. Cached per process;
+    /// null when the process can't be opened (elevated, already gone).
+    /// </summary>
+    private string? AppVersionOf(int processId)
+    {
+        lock (_appVersions)
+        {
+            if (_appVersions.TryGetValue(processId, out var cached)) return cached;
+            string? version = null;
+            try
+            {
+                using var p = Process.GetProcessById(processId);
+                version = p.MainModule?.FileVersionInfo.ProductVersion?.Trim();
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+            {
+                // leave it unknown
+            }
+            if (_appVersions.Count > 256) _appVersions.Clear();
+            return _appVersions[processId] = string.IsNullOrEmpty(version) ? null : version;
+        }
+    }
+
     /// <summary>The grammar model finished downloading (or failed). UI thread.</summary>
     private void OnModelChanged()
     {
@@ -478,9 +522,18 @@ public partial class App : Application
     /// <summary>Timing summary (counts and milliseconds only).</summary>
     private void LogPerfSummary()
     {
-        var summary = _services?.GetService<PerfCounters>()?.Summary();
+        var perf = _services?.GetService<PerfCounters>();
+        if (perf is null) return;
+        var summary = perf.Summary();
         if (!string.IsNullOrEmpty(summary))
             _logger?.LogInformation("Perf p50/p95/max: {Summary}", summary);
+
+        var counts = perf.Counts();
+        var now = DateTime.UtcNow;
+        var rates = PerfCounters.Rates(_lastPerfCounts, counts, now - _lastPerfAt);
+        _lastPerfCounts = counts;
+        _lastPerfAt = now;
+        _logger?.LogInformation("Rates: {Rates}; memory: {Usage}", rates.Length > 0 ? rates : "idle", ResourceUsage.Current());
     }
 
     /// <summary>Best effort: the process may be going down, so nothing here may throw.</summary>
@@ -512,7 +565,8 @@ public partial class App : Application
                 _log?.LogDirectory,
                 _services.GetRequiredService<UpdateService>(),
                 _services.GetRequiredService<GrmrModelStore>(),
-                RemoveGrammarModelAsync);
+                RemoveGrammarModelAsync,
+                _services.GetRequiredService<CompatibilityLog>());
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Show();
         }
@@ -560,6 +614,8 @@ public partial class App : Application
         _exitWait?.Unregister(null);
         _exitSignal?.Dispose();
         _perfTimer?.Stop();
+        _compatibilityTimer?.Stop();
+        _services?.GetService<CompatibilityLog>()?.Save();
         LogPerfSummary();
         _logger?.LogInformation("Redline exiting");
         _hotkeys?.Dispose();

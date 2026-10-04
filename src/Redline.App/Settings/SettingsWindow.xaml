@@ -122,6 +122,31 @@
                 </DockPanel>
             </TabItem>
 
+            <TabItem Header="Compatibility">
+                <DockPanel Margin="12">
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="0,0,0,8"
+                               Text="How Redline has worked in the apps you've used over the last 30 days. This record stays on this PC: it lists apps, their versions and the kinds of text fields, with counts. It never includes what you type, window titles or web addresses, and nothing is sent anywhere." />
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="View report" Padding="10,2" Click="CompatReport_Click"
+                                ToolTip="The exact contents of the record, as it would be shared" />
+                        <Button Content="Clear" Padding="10,2" Margin="8,0,0,0" Click="CompatClear_Click" />
+                    </StackPanel>
+                    <DataGrid x:Name="CompatGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                              GridLinesVisibility="None" CanUserAddRows="False" SelectionMode="Single">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="App" Binding="{Binding App}" Width="*" />
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="1.4*" />
+                            <DataGridTextColumn Header="Last used" Binding="{Binding LastSeen}" Width="Auto" />
+                        </DataGrid.Columns>
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="ToolTip" Value="{Binding Details}" />
+                            </Style>
+                        </DataGrid.RowStyle>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
+
             <TabItem Header="Dictionary">
                 <Grid Margin="12">
                     <Grid.RowDefinitions>

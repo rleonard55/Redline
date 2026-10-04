@@ -10,6 +10,9 @@ namespace Redline.Windows;
 
 public sealed record SurfaceChangedEventArgs(TextSurfaceContext? Surface, TextSurfaceCapabilities? Capabilities, string Reason);
 
+/// <summary>A focused field Redline declined to read. Identity only (no text, no title).</summary>
+public sealed record SurfaceBlockedEventArgs(string ProcessName, string ControlType, string ClassName, string FrameworkId, string Reason, bool Sensitive);
+
 public sealed record SnapshotChangedEventArgs(TextSurfaceContext Surface, TextSnapshot Snapshot, TextChange? Change);
 
 /// <summary>
@@ -70,6 +73,9 @@ public sealed class SurfaceTracker : IDisposable
 
     public event EventHandler<SurfaceChangedEventArgs>? SurfaceChanged;
     public event EventHandler<SnapshotChangedEventArgs>? SnapshotChanged;
+
+    /// <summary>Raised on the UIA thread each time a focused field is blocked (for the compatibility record).</summary>
+    public event EventHandler<SurfaceBlockedEventArgs>? SurfaceBlocked;
 
     public TextSurfaceContext? CurrentSurface => _adapter?.Context;
 
@@ -238,6 +244,7 @@ public sealed class SurfaceTracker : IDisposable
         if (!decision.Allowed)
         {
             var reason = $"Blocked: {decision.Reason} ({info.ProcessName} {info.ControlType}/{info.ClassName})";
+            SurfaceBlocked?.Invoke(this, new SurfaceBlockedEventArgs(info.ProcessName, info.ControlType, info.ClassName, info.FrameworkId, decision.Reason, decision.Sensitive));
             if (decision.Sensitive) Detach(reason);
             else DetachSoon(info, reason);
             return;

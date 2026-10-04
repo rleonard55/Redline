@@ -53,12 +53,14 @@ public sealed class ReplacementEngine
     private readonly ReplacementOptions _options;
     private readonly ILogger _logger;
     private readonly PerfCounters? _perf;
+    private readonly CompatibilityLog? _compatibility;
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
 
     public ReplacementEngine(UiaDispatcher uia, DocumentState document, ReplacementOptions? options = null, ILogger<ReplacementEngine>? logger = null,
-        PerfCounters? perf = null)
+        PerfCounters? perf = null, CompatibilityLog? compatibility = null)
     {
         _perf = perf;
+        _compatibility = compatibility;
         _uia = uia;
         _document = document;
         _options = options ?? new ReplacementOptions();
@@ -73,6 +75,7 @@ public sealed class ReplacementEngine
         {
             var result = await ApplyCoreAsync(adapter, issue, replacement, sw, ct).ConfigureAwait(false);
             _perf?.Record("correction", result.Duration);
+            _compatibility?.Correction(adapter.Context, result);
             _logger.LogInformation("Correction in {Process} ({Category}, {Rule}): {Result}",
                 adapter.Context.ProcessName, issue.Category, issue.Analyzer, result);
             return result;

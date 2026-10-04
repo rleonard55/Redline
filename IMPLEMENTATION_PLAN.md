@@ -1143,4 +1143,10 @@ services.AddSingleton<IPersonalDictionary, PersonalDictionary>();
 
 ## Next Step
 
-**Begin Phase 0:** Create the solution structure and start building the Compatibility Harness.
+*Updated 2026-10-04.* Phases 0–5 are complete (see CLAUDE.md for commits and details); Phase 6 has the
+on-device AI grammar check (6.0). The 6.1 AI rewriting deliverables are **on hold** by the owner's choice.
+Gaps found in a review of this plan and closed since: overlay z-order for topmost targets, overlay
+position after a DPI change, perf rates and memory (5.1), per-app compatibility status (5.1, as a local
+compatibility record — see `docs/telemetry.md` for the optional, not-yet-built sharing step), overlay
+smoke tests and CI (Testing Strategy). Still open: verifying multi-monitor / non-100% DPI on real
+hardware (R8).

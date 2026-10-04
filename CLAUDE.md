@@ -146,12 +146,31 @@ list of app quirks and how each is handled. Read both before changing behavior.
   underline on "go", applies "goes" and "was"->"were" via the pill). **PASS 2026-10-04**: Harper took "go" (the
   model's overlapping edit was suppressed as designed), the model's "was"->"were" applied and verified; the model
   also flagged "repot" -> "report", which spelling can't (real word). Model download via Settings: 23 s, hash OK.
-- Found while testing (pre-existing, not fixed): **underlines are hidden on a TopMost target window** — the overlay
-  sits just above its target in the normal z-order, so a topmost target covers it (the pill is topmost and shows).
-  The old hover e2e uses a TopMost form, so its screenshots never show squiggles; the GRMR e2e form is not topmost.
+- Found while testing: underlines were hidden on a TopMost target window (overlay stayed in the normal band).
+  **Fixed** in `OverlayWindow.InsertAfterFor` (topmost target -> topmost overlay directly above it; drops out of the
+  topmost band again for normal targets); covered by `Redline.Annotations.Tests`.
 - Notices: `installer/licenses/*.txt` (LLamaSharp, llama.cpp, CommunityToolkit, dotnet/extensions; fetched from
   upstream — the NuGet packages only carry a license expression) + a section on the model's licenses.
   MSI grew to ~65 MB (local 0.7.0 build 2026-10-04).
+
+### Phase gaps closed (2026-10-04, after the plan review)
+- **Overlay on DPI change:** `OverlayWindow.ShowAt` re-applies its exact rectangle if `WM_DPICHANGED` (sent during
+  `SetWindowPos` onto a monitor with another scale) made WPF resize it. Still not verified on real hardware.
+- **Perf stats (5.1):** `PerfCounters.Counts/Rates` (per-minute rates per counter) + `ResourceUsage` (private/working
+  set/managed MB, handles, threads): in the 5-min diagnostics-mode summary and the Diagnostics "Timings" line.
+- **Compatibility status (5.1, Settings > Apps):** `Core/Diagnostics/CompatibilityLog` — local per-app record keyed by
+  process + control type/class + framework: target app version, patterns, reads/empty reads, issues placed/not placed
+  per overlay pass, fixes applied/methods/problems (Redline's fixed messages), blocked reasons. No text, titles or
+  URLs. `%LOCALAPPDATA%\Redline\compatibility.json`, 30 days, 200 entries, saved every minute when dirty + at exit.
+  Fed by `SurfaceTracker.SurfaceChanged/SnapshotChanged/SurfaceBlocked` (new event), `OverlayManager` (layout) and
+  `ReplacementEngine` (outcome). Settings > **Compatibility** tab (status per app, details in the row tooltip,
+  *View report* = exact JSON in `ReportWindow`, *Clear*). This is step 1 of `docs/telemetry.md` (proposal; nothing
+  is sent — upload options and open questions are there for the user to decide).
+- **Testing strategy:** `tests/Redline.Annotations.Tests` (squiggle render via RenderTargetBitmap, overlay z-order
+  incl. topmost targets with off-screen non-activating windows, palettes); `.github/workflows/ci.yml` (windows-latest:
+  cargo build/test harper-ffi, dotnet build/test Release, uploads TRX). CI not yet run on GitHub (needs a push).
+- UI harnesses for checking windows without stopping the user's Redline live in the session scratchpad only: they
+  invoke `App.ConfigureServices` by reflection, construct the real window, and capture with `PrintWindow(.., 2)`.
 
 ### Phase 5 — next steps, in order
 1. Phase 5 wrap-up (it is functionally complete), then Phase 6 (optional AI) if the user wants it.
@@ -160,7 +179,8 @@ list of app quirks and how each is handled. Read both before changing behavior.
    installed 0.6.0 (start with Windows on). Future releases: bump Version, commit, push, release.ps1 (ask first).
 
 Deferred (documented in docs/compatibility.md): VS Code editor support (needs a VS Code extension);
-multi-monitor / non-100% DPI is implemented but untested (user has one 100% monitor).
+multi-monitor / non-100% DPI is implemented but untested (user has one 100% monitor). The user does **not** want
+Phase 6 AI rewriting for now (2026-10-04).
 
 ## Layout
 - `src/Redline.Core` — models, `TextDiff`, `DocumentState`, `AnalysisPipeline`, `IssueSet`,

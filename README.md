@@ -25,6 +25,8 @@ turned off) and, if you turn on AI grammar, a one-time download of the model.
 - Add to dictionary, ignore once, or ignore a grammar rule everywhere
 - Skips password fields, password managers and terminals automatically; exclude any other app in Settings
 - Every fix is verified before and after typing, and undone if the result isn't what was expected
+- Settings › Compatibility shows how Redline has worked in each app you use (kept on your PC only;
+  apps and field types with counts, never what you type)
 
 | Quick fix (light / dark) | All suggestions (light / dark) |
 |---|---|

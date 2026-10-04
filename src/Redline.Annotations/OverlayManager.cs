@@ -39,6 +39,7 @@ public sealed class OverlayManager : IDisposable
     private readonly WindowEventMonitor _windowEvents;
     private readonly ILogger _logger;
     private readonly PerfCounters? _perf;
+    private readonly CompatibilityLog? _compatibility;
     private readonly DispatcherTimer _refresh;
     private readonly DispatcherTimer _settle;
     private readonly DispatcherTimer _anchorTimer;
@@ -61,9 +62,11 @@ public sealed class OverlayManager : IDisposable
     private bool _anchorCheckRunning;
 
     public OverlayManager(Dispatcher ui, SurfaceTracker tracker, DocumentState document, IssueCacheManager cache,
-        WindowEventMonitor windowEvents, ILogger<OverlayManager>? logger = null, PerfCounters? perf = null)
+        WindowEventMonitor windowEvents, ILogger<OverlayManager>? logger = null, PerfCounters? perf = null,
+        CompatibilityLog? compatibility = null)
     {
         _perf = perf;
+        _compatibility = compatibility;
         _ui = ui;
         _tracker = tracker;
         _document = document;
@@ -264,6 +267,7 @@ public sealed class OverlayManager : IDisposable
             .Take(MaxIssuesDrawn)
             .ToList();
         var bounds = await adapter.GetBoundsAsync(drawn.Select(i => i.Range).ToList(), snapshot.Text);
+        _compatibility?.Layout(adapter.Context, bounds.Count(b => b.Any(r => !r.IsEmpty)), drawn.Count);
 
         // Anything may have changed while we were away on the UIA thread.
         if (!ReferenceEquals(adapter, _adapter) || !ReferenceEquals(issues, _issues) ||

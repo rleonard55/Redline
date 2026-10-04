@@ -7,6 +7,7 @@ using Redline.Analysis.Grmr;
 using Redline.App.Corrections;
 using Redline.App.Updates;
 using Redline.Core.Corrections;
+using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
 using Redline.Core.Settings;
 using Redline.Core.Updates;
@@ -29,6 +30,7 @@ public partial class SettingsWindow : Window
     private readonly string? _logDirectory;
     private readonly UpdateService _updates;
     private readonly GrmrModelStore _models;
+    private readonly CompatibilityLog _compatibility;
     private readonly Func<Task<bool>> _removeModel;
     private string? _modelNote;
     private bool _loading;
@@ -36,8 +38,10 @@ public partial class SettingsWindow : Window
     public SettingsWindow(
         SettingsStore store, HotkeyManager hotkeys, IPersonalDictionary dictionary, IgnoreList ignores,
         IReadOnlyList<string> languages, string? activeLanguage, IReadOnlyCollection<string> builtInExclusions,
-        string? logDirectory, UpdateService updates, GrmrModelStore models, Func<Task<bool>> removeModel)
+        string? logDirectory, UpdateService updates, GrmrModelStore models, Func<Task<bool>> removeModel,
+        CompatibilityLog compatibility)
     {
+        _compatibility = compatibility;
         _models = models;
         _removeModel = removeModel;
         _logDirectory = logDirectory;
@@ -63,6 +67,7 @@ public partial class SettingsWindow : Window
         VersionText.Text = $"Redline {App.Version.Split('+')[0]}";
         ShowUpdateState();
         ShowModelState();
+        LoadCompatibility();
         LoadSettings(store.Current);
         LoadLists();
 
@@ -72,8 +77,10 @@ public partial class SettingsWindow : Window
         Action<Hotkey?> hotkeyChanged = _ => Dispatcher.BeginInvoke(() => UpdateHotkeyHint(_store.Current));
         Action updateChanged = () => Dispatcher.BeginInvoke(ShowUpdateState);
         Action modelChanged = () => Dispatcher.BeginInvoke(ShowModelState);
+        Action compatibilityChanged = () => Dispatcher.BeginInvoke(LoadCompatibility);
         _updates.Changed += updateChanged;
         _models.Changed += modelChanged;
+        _compatibility.Changed += compatibilityChanged;
         _store.Changed += settingsChanged;
         _dictionary.Changed += listsChanged;
         _ignores.Changed += listsChanged;
@@ -86,6 +93,7 @@ public partial class SettingsWindow : Window
             _hotkeys.ActiveChanged -= hotkeyChanged;
             _updates.Changed -= updateChanged;
             _models.Changed -= modelChanged;
+            _compatibility.Changed -= compatibilityChanged;
             _hotkeys.Suspended = false;
         };
     }
@@ -331,6 +339,33 @@ public partial class SettingsWindow : Window
             Writing = s.Writing with { Spelling = spelling, Grammar = grammar, StyleSuggestions = style, AiGrammar = ai },
         });
     }
+
+    // ---- Compatibility ----
+
+    private sealed record CompatRow(string App, string Status, string LastSeen, string Details);
+
+    private void LoadCompatibility()
+    {
+        CompatGrid.ItemsSource = _compatibility.Entries()
+            .Where(e => e.Attaches > 0 || e.Blocked.Count > 0)
+            .Select(e => new CompatRow(
+                e.Process,
+                CompatibilityLog.StatusOf(e),
+                e.LastSeen,
+                $"Version {e.AppVersion ?? "unknown"}{Environment.NewLine}Field: {string.Join(" / ", new[] { e.ControlType, e.ClassName, e.Framework }.Where(s => s.Length > 0))}" +
+                $"{Environment.NewLine}Underlines placed {e.IssuesPlaced} of {e.IssuesPlaced + e.IssuesNotPlaced}; fixes applied {e.FixesApplied}, problems {e.FixProblems.Values.Sum()}"))
+            .ToList();
+    }
+
+    private void CompatReport_Click(object sender, RoutedEventArgs e)
+    {
+        _compatibility.Save();
+        new ReportWindow("Redline " + (char)0x2014 + " Compatibility report",
+            "This is the complete record, exactly as stored in " + CompatibilityLog.DefaultPath + ". It is not sent anywhere.",
+            _compatibility.ToJson()) { Owner = this }.ShowDialog();
+    }
+
+    private void CompatClear_Click(object sender, RoutedEventArgs e) => _compatibility.Clear();
 
     private void ShowModelState()
     {
