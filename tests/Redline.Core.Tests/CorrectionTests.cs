@@ -93,6 +93,38 @@ public class IgnoreListTests : IDisposable
     }
 }
 
+public class WordListFileTests
+{
+    [Fact]
+    public void OfficeCustomDictionary_IsUtf16WithBom()
+    {
+        var bytes = new byte[] { 0xFF, 0xFE }.Concat(System.Text.Encoding.Unicode.GetBytes("Redline" + (char)13 + (char)10 + "Zoë" + (char)13 + (char)10)).ToArray();
+        Assert.Equal(["Redline", "Zoë"], WordListFile.Parse(bytes));
+    }
+
+    [Fact]
+    public void WindowsDictionaryHeader_AndInvalidEntries_AreSkipped()
+    {
+        var text = string.Join((char)10, "#LID 1033", "Contoso", "", "  two words ", "contoso", "  Fabrikam  ", new string('x', 65));
+        Assert.Equal(["Contoso", "Fabrikam"], WordListFile.Parse(System.Text.Encoding.UTF8.GetBytes(text)));
+    }
+
+    [Fact]
+    public void AnsiFiles_FallBackToLatin1()
+    {
+        // "café" in Windows-1252 isn't valid UTF-8.
+        var bytes = new byte[] { (byte)'c', (byte)'a', (byte)'f', 0xE9 };
+        Assert.Equal(["café"], WordListFile.Parse(bytes));
+    }
+
+    [Fact]
+    public void Utf8Bom_IsStripped()
+    {
+        var bytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("naïve")).ToArray();
+        Assert.Equal(["naïve"], WordListFile.Parse(bytes));
+    }
+}
+
 public class IssueCacheManagerTests
 {
     private sealed class FakeDictionary : IPersonalDictionary

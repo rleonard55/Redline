@@ -28,6 +28,9 @@ list of app quirks and how each is handled. Read both before changing behavior.
 - `StartupRegistration` (Redline.Windows): Run key value `Redline` = quoted exe path; tests use a throwaway
   `HKCU\Software\Redline.Tests\Run-<guid>`. At startup only an existing opt-in is refreshed; changes apply both ways.
 - `SettingsWindow` (tray "Settings…"): saves on every change. Language shows "applies after restart".
+  Dictionary tab: *Import…* adds words from Word custom dictionaries (`%APPDATA%\Microsoft\UProof\*.DIC`, UTF-16)
+  or any word list (`Core/Corrections/WordListFile`; `IPersonalDictionary.AddRange` saves once). The Windows user
+  dictionary (`%APPDATA%\Microsoft\Spelling`) needs no import: the Windows spell checker already honors it.
 - **Hover quick fix** (`Annotations/HoverController` + `HoverPill`, geometry in `Core/Geometry/HoverLayout`):
   resting the pointer on a squiggle for 300 ms shows a pill under the word: [● top suggestion | ⋯].
   Suggestion → `CorrectionController.ApplyFirstSuggestionAsync` (engine-verified); ⋯ → the full popup.
@@ -107,7 +110,8 @@ list of app quirks and how each is handled. Read both before changing behavior.
   (frozen brushes). `SuggestionPopup` sets `Flyout.*` DynamicResources per show; `HoverPill.ApplyPalette` per show.
 - Tray menu (WinForms `ContextMenuStrip`): `TrayIcon/TrayMenuRenderer` (light/dark professional renderer, own
   tick/separator/hover drawing, DWM rounded corners) applied in the menu's `Opening` from `SystemTheme.IsDark`.
-  Still light-only: the Win32 `MessageBox`es ("already running", startup failure). Tray balloons are drawn by Windows.
+  Message boxes use `App/MessageDialog` (Fluent, follows the theme) instead of the always-light Win32 `MessageBox`;
+  don't add new `MessageBox.Show` calls. Tray balloons are drawn by Windows.
 - Verified live 2026-10-04 (dark and light, incl. switching with Settings open; hover e2e passes in both; tray menu
   checked with a scratch harness that builds the real `TrayIconHost`).
 - Diagnostics window: same per-window Fluent theme; the log ListBox gets a dense item style built in code on Loaded
@@ -134,9 +138,10 @@ list of app quirks and how each is handled. Read both before changing behavior.
 - `Core/Text/RewriteDiff`: token LCS -> word-level edits; drops whitespace-only edits and an added final period;
   insertions attach to the neighbouring word; rejects rewrites (> 6 edits, > 50% of word chars changed, length
   ratio outside 0.6–1.6). Issues: Analyzer "GRMR", RuleId "GRMR:Correction", Grammar/Punctuation category.
-- Pipeline: `ITextAnalyzer.IsSupplementary` — supplementary issues overlapping a primary issue are dropped
-  (so "tset" keeps the spelling squiggle). Known gap: that happens before user filters, so a hidden primary issue
-  still suppresses the model's.
+- Pipeline: `ITextAnalyzer.IsSupplementary` — the pipeline tags those issues (`TextIssue.Supplementary`) and keeps
+  them all; `IssueCacheManager.Filter` drops a supplementary issue only if it overlaps a primary issue that is still
+  *visible* after user filters (so "tset" keeps the spelling squiggle, but an ignored/hidden primary doesn't
+  suppress the model's).
 - Setting `Writing.AiGrammar` (default off). `IssueCacheManager` hides GRMR issues while it's off. Turning it on
   starts the download (`App.ApplyAiGrammar`); at startup a missing model is never fetched silently. Settings >
   Writing shows Download/Cancel/Remove + progress. Downloads resume from `.partial` (Range), 60 s stall timeout.

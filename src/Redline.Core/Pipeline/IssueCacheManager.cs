@@ -106,6 +106,13 @@ public sealed class IssueCacheManager
     private IssueSet Filter(IssueSet raw)
     {
         var kept = raw.Issues.Where(i => !IsFilteredOut(i)).ToList();
+
+        // A supplementary issue yields to any visible primary issue it overlaps (so "tset" keeps the
+        // spelling squiggle), but not to one the user hid; then the supplementary one shows instead.
+        var primary = kept.Where(i => !i.Supplementary).ToList();
+        if (primary.Count < kept.Count)
+            kept.RemoveAll(i => i.Supplementary && primary.Any(p => p.Range.IntersectsWith(i.Range)));
+
         return kept.Count == raw.Issues.Count ? raw : new IssueSet(kept, raw.SnapshotVersion);
     }
 

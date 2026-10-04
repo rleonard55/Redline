@@ -227,7 +227,11 @@ public sealed class AnalysisPipeline : IDisposable
 
         token.ThrowIfCancellationRequested();
 
-        var fresh = MergeSupplementary(available, timed.Select(t => t.Issues).ToList());
+        // Supplementary issues are tagged, not dropped: which ones show depends on which primary
+        // issues survive the user's filters (IssueCacheManager).
+        var fresh = available.Zip(timed, (a, t) => a.IsSupplementary
+            ? t.Issues.Select(i => i with { Supplementary = true })
+            : t.Issues).SelectMany(i => i).ToList();
         _issues = incremental
             ? _issues.Rebase(oldRegion, region.Length, fresh, snapshot.Version)
             : IssueSet.From(fresh, snapshot.Version);
@@ -242,22 +246,6 @@ public sealed class AnalysisPipeline : IDisposable
         return new AnalysisResult(
             surface, snapshot, _issues, region, incremental, sw.Elapsed,
             timed.ToDictionary(t => t.Name, t => t.Duration));
-    }
-
-    /// <summary>All primary issues, plus supplementary ones that don't overlap any primary issue.</summary>
-    private static List<TextIssue> MergeSupplementary(List<ITextAnalyzer> analyzers, List<IReadOnlyList<TextIssue>> results)
-    {
-        var primary = new List<TextIssue>();
-        var supplementary = new List<TextIssue>();
-        for (int i = 0; i < analyzers.Count; i++)
-            (analyzers[i].IsSupplementary ? supplementary : primary).AddRange(results[i]);
-
-        foreach (var issue in supplementary)
-        {
-            if (!primary.Any(p => p.Range.IntersectsWith(issue.Range)))
-                primary.Add(issue);
-        }
-        return primary;
     }
 
     private async Task<(string Name, IReadOnlyList<TextIssue> Issues, TimeSpan Duration)> RunAnalyzerAsync(

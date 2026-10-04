@@ -117,7 +117,7 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
             if (r is null) return null;
 
             // Physical screen pixels (Redline is PerMonitorV2-aware).
-            var fix = VirtualizationFix();
+            var fix = BoundsFix();
             return r.GetBoundingRectangles()
                 .Select(rect => fix(new TextBounds(rect.X, rect.Y, rect.Width, rect.Height)))
                 .Where(b => !b.IsEmpty)
@@ -135,7 +135,7 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
             if (_text is null) return null;
             var all = new List<IReadOnlyList<TextBounds>>(ranges.Count);
             int driftHint = 0; // drift tends to grow monotonically through a document
-            var fix = VirtualizationFix();
+            var fix = BoundsFix();
             foreach (var range in ranges)
                 all.Add(VerifiedBounds(_text, range, documentText, ref driftHint).Select(fix).ToList());
             return all;
@@ -274,6 +274,82 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
         if (root != IntPtr.Zero && GetForegroundWindow() != root)
             SetForegroundWindow(root);
     }
+
+    /// <summary>UIA thread only. Every correction for this surface's text rectangles, in order.</summary>
+    private Func<TextBounds, TextBounds> BoundsFix()
+    {
+        var lines = LineHeightFix();
+        var dpi = VirtualizationFix();
+        return b => dpi(lines(b));
+    }
+
+    /// <summary>
+    /// UIA thread only. Multiline Win32/WinForms Edit controls: grow rectangles to the font's line height
+    /// (see <see cref="Win32EditLines"/>); identity otherwise. In the control's own units, so it runs before
+    /// <see cref="VirtualizationFix"/>. Re-evaluated per call: the app can change the font.
+    /// </summary>
+    private Func<TextBounds, TextBounds> LineHeightFix()
+    {
+        if (Context.FrameworkId is not ("Win32" or "WinForm") || Context.NativeWindowHandle == 0)
+            return static b => b;
+
+        var hwnd = new IntPtr(Context.NativeWindowHandle);
+        var className = new System.Text.StringBuilder(256);
+        if (GetClassNameW(hwnd, className, className.Capacity) == 0 ||
+            !Win32EditLines.IsMultilineEdit(className.ToString(), GetWindowLongW(hwnd, GWL_STYLE)))
+            return static b => b;
+
+        int lineHeight = FontLineHeight(hwnd);
+        return lineHeight <= 0 ? static b => b : b => Win32EditLines.WithLineHeight(b, lineHeight);
+    }
+
+    /// <summary>
+    /// tmHeight of the control's font (WM_GETFONT), in the control's pixels; 0 if unknown. The HFONT belongs
+    /// to the target process, so its LOGFONT is copied into a font of our own to measure.
+    /// </summary>
+    private static int FontLineHeight(IntPtr hwnd)
+    {
+        if (SendMessageTimeoutW(hwnd, WM_GETFONT, IntPtr.Zero, IntPtr.Zero, SMTO_ABORTIFHUNG, 100, out var font) == IntPtr.Zero ||
+            font == IntPtr.Zero)
+            return 0; // hung, or the control uses the system font (UIA's height is right for that one)
+
+        var logFont = new byte[LogFontSize];
+        if (GetObjectW(font, logFont.Length, logFont) == 0) return 0;
+        var own = CreateFontIndirectW(logFont);
+        if (own == IntPtr.Zero) return 0;
+        var dc = GetDC(IntPtr.Zero);
+        try
+        {
+            var old = SelectObject(dc, own);
+            var metrics = new int[TextMetricInts];
+            bool ok = GetTextMetricsW(dc, metrics);
+            SelectObject(dc, old);
+            return ok ? metrics[0] : 0; // tmHeight
+        }
+        finally
+        {
+            ReleaseDC(IntPtr.Zero, dc);
+            DeleteObject(own);
+        }
+    }
+
+    private const int GWL_STYLE = -16;
+    private const uint WM_GETFONT = 0x0031;
+    private const uint SMTO_ABORTIFHUNG = 0x0002;
+    private const int LogFontSize = 92;      // LOGFONTW
+    private const int TextMetricInts = 15;   // TEXTMETRICW is 60 bytes; tmHeight comes first
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetClassNameW(IntPtr hwnd, System.Text.StringBuilder name, int max);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetWindowLongW(IntPtr hwnd, int index);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern int GetObjectW(IntPtr obj, int size, byte[] buffer);
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern IntPtr CreateFontIndirectW(byte[] logFont);
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern bool GetTextMetricsW(IntPtr dc, int[] metrics);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hwnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
 
     /// <summary>
     /// UIA thread only. The correction for text rectangles of a classic Win32/WinForms control in a window

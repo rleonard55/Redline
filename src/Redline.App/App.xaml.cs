@@ -75,7 +75,7 @@ public partial class App : Application
         _singleInstance = new Mutex(initiallyOwned: true, SingleInstanceName, out bool createdNew);
         if (!createdNew)
         {
-            MessageBox.Show("Redline is already running (see the system tray).", "Redline", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageDialog.ShowInfo("Redline is already running (see the system tray).");
             Shutdown();
             return;
         }
@@ -224,7 +224,7 @@ public partial class App : Application
         catch (Exception ex)
         {
             _logger.LogCritical(ex, "Failed to start focus tracking");
-            MessageBox.Show($"Redline could not start focus tracking:\n{ex.Message}", "Redline", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageDialog.ShowError($"Redline could not start focus tracking:\n{ex.Message}");
         }
 
         if (e.Args.Contains("--diagnostics", StringComparer.OrdinalIgnoreCase))

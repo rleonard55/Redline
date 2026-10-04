@@ -194,7 +194,7 @@ public class GrammarModelPipelineTests
     }
 
     [Fact]
-    public async Task SupplementaryIssues_OverlappingPrimaryOnes_AreDropped()
+    public async Task SupplementaryIssues_AreTagged_AndKept()
     {
         var primary = new WordAnalyzer("Primary", "an tset", supplementary: false);
         var model = new WordAnalyzer(AnalyzerNames.GrammarModel, "an", supplementary: true);
@@ -202,9 +202,9 @@ public class GrammarModelPipelineTests
 
         var result = await Next(pipeline, () => pipeline.Submit(Surface, Snap("an apple or an tset")));
 
-        // "an" at 0 survives; "an" inside "an tset" (12) loses to the primary issue there.
-        Assert.Equal([(0, AnalyzerNames.GrammarModel), (12, "Primary")],
-            result.Issues.Issues.Select(i => (i.StartOffset, i.Analyzer)));
+        // Overlaps are resolved after user filters (IssueCacheManager), so the pipeline keeps all of them.
+        Assert.Equal([(0, AnalyzerNames.GrammarModel, true), (12, AnalyzerNames.GrammarModel, true), (12, "Primary", false)],
+            result.Issues.Issues.Select(i => (i.StartOffset, i.Analyzer, i.Supplementary)));
     }
 
     [Fact]
@@ -264,6 +264,48 @@ public class GrammarModelFilterTests
         Assert.Empty(cache.Get("s1")!.Issues);
         cache.SetWriting(new WritingSettings { AiGrammar = true });
         Assert.Single(cache.Get("s1")!.Issues);
+    }
+
+    private static TextIssue Issue(int start, string text, IssueCategory category, bool supplementary) => new()
+    {
+        StartOffset = start, Length = text.Length, OriginalText = text, Category = category, Message = "m",
+        Analyzer = supplementary ? AnalyzerNames.GrammarModel : "Primary", Supplementary = supplementary,
+    };
+
+    // "an apple or an tset": the model flags "an" twice; spelling flags "tset", grammar flags "an tset".
+    private static IssueSet Overlapping() => IssueSet.From(
+    [
+        Issue(0, "an", IssueCategory.Grammar, supplementary: true),
+        Issue(12, "an", IssueCategory.Grammar, supplementary: true),
+        Issue(15, "tset", IssueCategory.Spelling, supplementary: false),
+        Issue(12, "an tset", IssueCategory.Grammar, supplementary: false),
+    ], 1);
+
+    [Fact]
+    public void SupplementaryIssues_OverlappingVisiblePrimaryOnes_AreHidden()
+    {
+        var cache = new IssueCacheManager(new NoDictionary(), new IgnoreList(null));
+        cache.SetWriting(new WritingSettings { AiGrammar = true });
+        cache.Update("s1", Overlapping());
+
+        Assert.Equal([(0, AnalyzerNames.GrammarModel), (12, "Primary"), (15, "Primary")],
+            cache.Get("s1")!.Issues.Select(i => (i.StartOffset, i.Analyzer)));
+    }
+
+    [Fact]
+    public void SupplementaryIssues_ShowWhenTheOverlappingPrimaryOnesAreHidden()
+    {
+        var ignores = new IgnoreList(null);
+        var cache = new IssueCacheManager(new NoDictionary(), ignores);
+        cache.SetWriting(new WritingSettings { AiGrammar = true, Spelling = false });
+        var issues = Overlapping();
+        cache.Update("s1", issues);
+        Assert.Equal([0, 12], cache.Get("s1")!.Issues.Select(i => i.StartOffset));
+
+        // With "tset" hidden by category and "an tset" ignored, nothing suppresses the model's "an" at 12.
+        ignores.IgnoreInSession(issues.Issues.Single(i => i is { Analyzer: "Primary", Category: IssueCategory.Grammar }));
+        Assert.Equal([(0, AnalyzerNames.GrammarModel), (12, AnalyzerNames.GrammarModel)],
+            cache.Get("s1")!.Issues.Select(i => (i.StartOffset, i.Analyzer)));
     }
 
     [Fact]

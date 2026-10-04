@@ -31,6 +31,22 @@ public sealed class PersonalDictionaryTests : IDisposable
         Assert.False(new PersonalDictionary(_path).Contains("foo"));
     }
 
+    [Fact]
+    public void AddRange_AddsNewWordsOnce_AndRaisesChangedOnce()
+    {
+        var dict = new PersonalDictionary(_path);
+        dict.Add("Redline");
+        int changes = 0;
+        dict.Changed += () => changes++;
+
+        Assert.Equal(2, dict.AddRange(["redline", "Harper", " ", "two words", "Contoso"]));
+        Assert.Equal(1, changes);
+        Assert.Equal(3, new PersonalDictionary(_path).Words.Count);
+
+        Assert.Equal(0, dict.AddRange(["harper"]));
+        Assert.Equal(1, changes);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

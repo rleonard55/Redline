@@ -31,3 +31,25 @@ public class DpiVirtualizationTests
         Assert.Equal(r, DpiVirtualization.FromClientOrigin(r, 500, 300, 1.0));
     }
 }
+
+public class Win32EditLinesTests
+{
+    [Theory]
+    [InlineData("Edit", 0x0004, true)]
+    [InlineData("EDIT", 0x50010004, true)]
+    [InlineData("WindowsForms10.EDIT.app.0.230f04a_r8_ad1", 0x0004, true)]
+    [InlineData("Edit", 0x0000, false)]                  // single-line edits already report the line height
+    [InlineData("RichEditD2DPT", 0x0004, false)]         // Notepad: correct rectangles
+    [InlineData("WindowsForms10.RichEdit20W.app.0.1", 0x0004, false)]
+    public void OnlyMultilineClassicEdits(string className, int style, bool expected) =>
+        Assert.Equal(expected, Win32EditLines.IsMultilineEdit(className, style));
+
+    [Fact]
+    public void WithLineHeight_GrowsDownward_NeverShrinks()
+    {
+        var em = new TextBounds(291, 386, 60, 37);
+        Assert.Equal(new TextBounds(291, 386, 60, 50), Win32EditLines.WithLineHeight(em, 50));
+        Assert.Equal(em, Win32EditLines.WithLineHeight(em, 30));
+        Assert.Equal(TextBounds.Empty, Win32EditLines.WithLineHeight(TextBounds.Empty, 50));
+    }
+}

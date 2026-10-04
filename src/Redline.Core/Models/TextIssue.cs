@@ -26,6 +26,12 @@ public record TextIssue
     public long SnapshotVersion { get; init; }
 
     /// <summary>
+    /// From a supplementary analyzer (<see cref="Interfaces.ITextAnalyzer.IsSupplementary"/>): shown only where no
+    /// visible primary issue overlaps it. Set by the pipeline; the overlap is resolved after user filters.
+    /// </summary>
+    public bool Supplementary { get; init; }
+
+    /// <summary>
     /// Identifies the check that produced the issue, for "Ignore rule". Analyzers set it when they
     /// can name the rule more precisely than analyzer + category.
     /// </summary>

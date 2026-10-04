@@ -58,6 +58,26 @@ public sealed class PersonalDictionary : IPersonalDictionary
         Changed?.Invoke();
     }
 
+    /// <summary>Adds the single-word entries not present yet, saving and raising Changed once.</summary>
+    public int AddRange(IEnumerable<string> words)
+    {
+        int added = 0;
+        lock (_gate)
+        {
+            foreach (var raw in words)
+            {
+                var word = raw.Trim();
+                if (word.Length > 0 && !word.Any(char.IsWhiteSpace) && _words.Add(word))
+                    added++;
+            }
+            if (added > 0)
+                Save();
+        }
+        if (added > 0)
+            Changed?.Invoke();
+        return added;
+    }
+
     public bool Remove(string word)
     {
         lock (_gate)

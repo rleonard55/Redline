@@ -380,8 +380,7 @@ public partial class SettingsWindow : Window
         var url = CompatibilityIssue.Url(UpdateCatalog.Owner, UpdateCatalog.Repository, _compatibility.Report() with { Apps = [] }, entry);
         if (url is null)
         {
-            MessageBox.Show(this, "This app's record is too large for a pre-filled issue. Use View report and copy the part you need.",
-                "Redline", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageDialog.ShowInfo("This app's record is too large for a pre-filled issue. Use View report and copy the part you need.", this);
             return;
         }
         App.OpenUrl(url);
@@ -491,6 +490,33 @@ public partial class SettingsWindow : Window
     {
         foreach (var word in WordList.SelectedItems.Cast<string>().ToList())
             _dictionary.Remove(word);
+    }
+
+    private void WordImport_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import words",
+            Filter = "Dictionaries and word lists (*.dic;*.txt)|*.dic;*.txt|All files (*.*)|*.*",
+            InitialDirectory = WordListFile.OfficeDictionaryFolder ?? string.Empty,
+        };
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        try
+        {
+            var words = WordListFile.Read(dialog.FileName);
+            int added = _dictionary.AddRange(words);
+            string name = Path.GetFileName(dialog.FileName);
+            ImportResult.Text = words.Count == 0
+                ? $"No words found in {name}."
+                : $"Added {added} of {words.Count} word{(words.Count == 1 ? "" : "s")} from {name}" +
+                  (added < words.Count ? $" ({words.Count - added} already there)." : ".");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ImportResult.Text = "Couldn't read that file: " + ex.Message;
+        }
     }
 
     private void RuleRestore_Click(object sender, RoutedEventArgs e)

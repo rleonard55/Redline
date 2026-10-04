@@ -54,7 +54,7 @@ Always-on-top targets: underlines now show (overlay becomes topmost with the tar
 | `contenteditable` without an ARIA role is exposed as `Group`, not `Edit` | Chromium | Accepted when it has TextPattern and is focusable (non-editable focusable elements have no TextPattern) |
 | Spelling and grammar both flag the same word | All | One squiggle per range (spelling, grammar, punctuation, style) |
 | Querying a classic Win32 edit control's text geometry through UIA pulls focus back to it | Win32 Edit (e.g. WinForms) | Geometry is only queried while the target window is in front (it closed the suggestion popup otherwise) |
-| Text rectangles sit a few pixels high, so underlines cross the lower part of the letters (any scale) | Win32 Edit (WinForms) with large fonts | Not handled yet; cosmetic |
+| Multiline Edit rectangles are the font's em height, not the line height (14 pt Segoe UI: 19 px instead of 25), so underlines cross the lower part of the letters | Multiline Win32 `Edit` / WinForms `TextBox` (single-line ones are right) | Rectangles grow to the control font's `tmHeight` (WM_GETFONT; its LOGFONT is copied into a font of our own to measure) — `Win32EditLines`; covered by `Win32EditGeometryTests` |
 | In a window Windows bitmap-scales, UIA's Win32 proxy returns text rectangles as the control's physical origin plus *unscaled* character offsets, so underlines shrink toward the control's top-left | Win32 / WinForms controls in DPI-unaware (or stale system-aware) apps at scaling other than 100% | When the control's window DPI differs from its monitor's, offsets from the client origin are scaled by monitor ÷ window DPI (`DpiVirtualization`). Verified at 125%: underlines and the hover pill line up |
 
 ## Phase 4 decision
