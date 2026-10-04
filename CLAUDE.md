@@ -10,12 +10,12 @@ list of app quirks and how each is handled. Read both before changing behavior.
 
 | Phase | State | Commit |
 |---|---|---|
-| 0 Compatibility harness | done | 78e4d2c |
-| 1 Core prototype | done | 78e4d2c, c2ee9d1 |
-| 2 Corrections (engine, popup, ignore/dictionary) | done | 205f0de |
-| 3 Inline squiggle overlay | done | f683e89 |
-| 4 Compatibility hardening | done | 93bb57d, d8e6afb |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done | 4d1ceb4, 57b4473, 7520968, (installer next commit) |
+| 0 Compatibility harness | done | 3f1f9de |
+| 1 Core prototype | done | 3f1f9de, 9af3f8d |
+| 2 Corrections (engine, popup, ignore/dictionary) | done | 830aaa4 |
+| 3 Inline squiggle overlay | done | 4a5bb77 |
+| 4 Compatibility hardening | done | 2fa0c5f, 02bbf49 |
+| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done | 9a62723, 2ad6818, 52f4216, 5db7d84 |
 | 6 Optional AI | not started | |
 
 ### Phase 5 — part 2 (done), how it fits together
