@@ -342,7 +342,7 @@ public partial class SettingsWindow : Window
 
     // ---- Compatibility ----
 
-    private sealed record CompatRow(string App, string Status, string LastSeen, string Details);
+    private sealed record CompatRow(string App, string Status, string LastSeen, string Details, string Key);
 
     private void LoadCompatibility()
     {
@@ -353,7 +353,8 @@ public partial class SettingsWindow : Window
                 CompatibilityLog.StatusOf(e),
                 e.LastSeen,
                 $"Version {e.AppVersion ?? "unknown"}{Environment.NewLine}Field: {string.Join(" / ", new[] { e.ControlType, e.ClassName, e.Framework }.Where(s => s.Length > 0))}" +
-                $"{Environment.NewLine}Underlines placed {e.IssuesPlaced} of {e.IssuesPlaced + e.IssuesNotPlaced}; fixes applied {e.FixesApplied}, problems {e.FixProblems.Values.Sum()}"))
+                $"{Environment.NewLine}Underlines placed {e.IssuesPlaced} of {e.IssuesPlaced + e.IssuesNotPlaced}; fixes applied {e.FixesApplied}, problems {e.FixProblems.Values.Sum()}",
+                e.Key))
             .ToList();
     }
 
@@ -366,6 +367,25 @@ public partial class SettingsWindow : Window
     }
 
     private void CompatClear_Click(object sender, RoutedEventArgs e) => _compatibility.Clear();
+
+    private void CompatGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        CompatIssueButton.IsEnabled = CompatGrid.SelectedItem is CompatRow;
+
+    /// <summary>Opens GitHub's new-issue form pre-filled with the selected app's entry; nothing is sent until the user submits.</summary>
+    private void CompatIssue_Click(object sender, RoutedEventArgs e)
+    {
+        if (CompatGrid.SelectedItem is not CompatRow row) return;
+        var entry = _compatibility.Entries().FirstOrDefault(x => x.Key == row.Key);
+        if (entry is null) return;
+        var url = CompatibilityIssue.Url(UpdateCatalog.Owner, UpdateCatalog.Repository, _compatibility.Report() with { Apps = [] }, entry);
+        if (url is null)
+        {
+            MessageBox.Show(this, "This app's record is too large for a pre-filled issue. Use View report and copy the part you need.",
+                "Redline", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        App.OpenUrl(url);
+    }
 
     private void ShowModelState()
     {

@@ -1,6 +1,7 @@
 # Compatibility telemetry — proposal
 
-**Status:** proposal; nothing is sent today. Step 1 below (the local record) is built.
+**Status:** steps 1 and 2 below are built (local record; "Report a problem" opens a pre-filled public GitHub
+issue the user reviews and submits). Automatic upload (step 3) is not planned for now.
 
 ## Goal
 

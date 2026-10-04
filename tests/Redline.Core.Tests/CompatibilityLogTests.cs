@@ -154,3 +154,30 @@ public class PerfRatesTests
         Assert.Contains("MB private", usage.ToString());
     }
 }
+
+public class CompatibilityIssueTests
+{
+    private static (CompatibilityReport Header, AppCompatibilityEntry Entry) Sample()
+    {
+        var log = new CompatibilityLog(null, "0.7.0");
+        log.Attached(new TextSurfaceContext { SurfaceId = "1", ProcessName = "ms-teams.exe", ControlType = "Edit", ClassName = "ck-editor__editable", FrameworkId = "Chrome", WindowTitle = "Chat | Private" },
+            new TextSurfaceCapabilities { SupportedPatterns = ["Text"] }, "25.1");
+        return (log.Report() with { Apps = [] }, Assert.Single(log.Entries()));
+    }
+
+    [Fact]
+    public void Url_OpensANewIssue_WithTheEntryAndNoTitleText()
+    {
+        var (header, entry) = Sample();
+        var url = CompatibilityIssue.Url("rleonard55", "Redline", header, entry);
+
+        Assert.NotNull(url);
+        Assert.StartsWith("https://github.com/rleonard55/Redline/issues/new?title=", url!.AbsoluteUri);
+        var decoded = Uri.UnescapeDataString(url.Query);
+        Assert.Contains("Compatibility: ms-teams.exe", decoded);
+        Assert.Contains("\"className\": \"ck-editor__editable\"", decoded);
+        Assert.Contains("Redline 0.7.0", decoded);
+        Assert.DoesNotContain("Private", decoded);
+        Assert.True(url.AbsoluteUri.Length <= CompatibilityIssue.MaxUrlLength);
+    }
+}

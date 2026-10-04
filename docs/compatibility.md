@@ -26,7 +26,14 @@ squiggle overlay (checked by screenshot), and applying corrections through the r
 | Web page `<input type=password>` | Edge, Chrome | (none) | blocked ✅ | — | — | Sensitive |
 | VS Code editor (Monaco) | Electron | `native-edit-context` | reads as empty | — | — | **Not supported.** Without screen-reader mode Monaco exposes only "The editor is not accessible at this time…"; Redline treats it as an empty field and does nothing. See below |
 
-Not checked live: multiple monitors, display scaling other than 100%.
+Display scaling (checked 2026-10-04 at 125% on one monitor with `tools/manual-tests/scripts/scale_check.ps1`):
+DPI-aware apps (the ones above) are correct. **DPI-virtualized apps are not**: in a window Windows bitmap-scales
+(a DPI-unaware app, or a system-aware app after the scale changed), text-range rectangles come back unscaled while
+the element's bounds are physical, so underlines are drawn shrunk toward the top-left and the hover pill can't be
+hit. Fix needed: convert those rectangles (e.g. `LogicalToPhysicalPointForPerMonitorDPI`) when the target window's
+DPI differs from its monitor's. Not checked live: moving between monitors with different scaling (one monitor).
+
+Always-on-top targets: underlines now show (overlay becomes topmost with the target), checked live 2026-10-04.
 
 ## App-specific quirks and how Redline handles them
 
@@ -49,6 +56,7 @@ Not checked live: multiple monitors, display scaling other than 100%.
 | `contenteditable` without an ARIA role is exposed as `Group`, not `Edit` | Chromium | Accepted when it has TextPattern and is focusable (non-editable focusable elements have no TextPattern) |
 | Spelling and grammar both flag the same word | All | One squiggle per range (spelling, grammar, punctuation, style) |
 | Querying a classic Win32 edit control's text geometry through UIA pulls focus back to it | Win32 Edit (e.g. WinForms) | Geometry is only queried while the target window is in front (it closed the suggestion popup otherwise) |
+| Text rectangles sit a few pixels high, so underlines cross the lower part of the letters (any scale) | Win32 Edit (WinForms) with large fonts | Not handled yet; cosmetic |
 
 ## Phase 4 decision
 

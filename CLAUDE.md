@@ -155,7 +155,15 @@ list of app quirks and how each is handled. Read both before changing behavior.
 
 ### Phase gaps closed (2026-10-04, after the plan review)
 - **Overlay on DPI change:** `OverlayWindow.ShowAt` re-applies its exact rectangle if `WM_DPICHANGED` (sent during
-  `SetWindowPos` onto a monitor with another scale) made WPF resize it. Still not verified on real hardware.
+  `SetWindowPos` onto a monitor with another scale) made WPF resize it. Not verifiable here (one monitor).
+- **125% checked live** (`tools/manual-tests/scripts/scale_check.ps1`, one scaling step up, always restores):
+  DPI-aware targets correct; **DPI-virtualized targets wrong** (text rects unscaled; see docs/compatibility.md) —
+  open bug. The scaling API (`SPI_GET/SETLOGICALDPIOVERRIDE`) takes ONE int = steps relative to the *recommended*
+  scale (the user's display recommends 150%; 100% = -2). Reading it as a struct once set the display to 150% for
+  ~2 min — the script now checks the resulting DPI and restores in `finally`. Ask before running it.
+- **Report a problem** (Settings > Compatibility): `Core/Diagnostics/CompatibilityIssue` builds a pre-filled public
+  GitHub new-issue URL (title, user prompt, that entry's JSON, label `compatibility`); opened in the browser, the
+  user reviews and submits. Automatic upload (telemetry option B) is **not wanted for now** (2026-10-04).
 - **Perf stats (5.1):** `PerfCounters.Counts/Rates` (per-minute rates per counter) + `ResourceUsage` (private/working
   set/managed MB, handles, threads): in the 5-min diagnostics-mode summary and the Diagnostics "Timings" line.
 - **Compatibility status (5.1, Settings > Apps):** `Core/Diagnostics/CompatibilityLog` — local per-app record keyed by

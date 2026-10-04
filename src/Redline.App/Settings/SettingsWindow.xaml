@@ -125,14 +125,17 @@
             <TabItem Header="Compatibility">
                 <DockPanel Margin="12">
                     <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="0,0,0,8"
-                               Text="How Redline has worked in the apps you've used over the last 30 days. This record stays on this PC: it lists apps, their versions and the kinds of text fields, with counts. It never includes what you type, window titles or web addresses, and nothing is sent anywhere." />
+                               Text="How Redline has worked in the apps you've used over the last 30 days. This record stays on this PC: it lists apps, their versions and the kinds of text fields, with counts. It never includes what you type, window titles or web addresses. Nothing is sent unless you choose Report a problem and submit the issue it opens." />
                     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
-                        <Button Content="View report" Padding="10,2" Click="CompatReport_Click"
-                                ToolTip="The exact contents of the record, as it would be shared" />
+                        <Button x:Name="CompatIssueButton" Content="Report a problem" Padding="10,2" Click="CompatIssue_Click" IsEnabled="False"
+                                ToolTip="Opens a pre-filled public GitHub issue with the selected app's record. You can read and edit everything before submitting." />
+                        <Button Content="View report" Padding="10,2" Margin="8,0,0,0" Click="CompatReport_Click"
+                                ToolTip="The exact contents of the record" />
                         <Button Content="Clear" Padding="10,2" Margin="8,0,0,0" Click="CompatClear_Click" />
                     </StackPanel>
                     <DataGrid x:Name="CompatGrid" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
-                              GridLinesVisibility="None" CanUserAddRows="False" SelectionMode="Single">
+                              GridLinesVisibility="None" CanUserAddRows="False" SelectionMode="Single"
+                              SelectionChanged="CompatGrid_SelectionChanged">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="App" Binding="{Binding App}" Width="*" />
                             <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="1.4*" />
