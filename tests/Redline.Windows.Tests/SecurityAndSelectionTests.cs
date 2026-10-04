@@ -79,6 +79,19 @@ public class SecurityFilterTests
     }
 
     [Fact]
+    public void UserExclusions_AddToBuiltIns_AndCanBeReplaced()
+    {
+        var filter = new SecurityFilter();
+        filter.SetUserExclusions(["Vault.exe"]);
+        Assert.False(filter.Evaluate(Info("vault.exe")).Allowed);
+        Assert.False(filter.Evaluate(Info("KeePass.exe")).Allowed); // built-in stays
+
+        filter.SetUserExclusions([]);
+        Assert.True(filter.Evaluate(Info("Vault.exe")).Allowed);
+        Assert.False(filter.Evaluate(Info("KeePass.exe")).Allowed); // still built-in
+    }
+
+    [Fact]
     public void OwnProcess_IsBlocked()
     {
         Assert.False(_filter.Evaluate(Info(pid: Environment.ProcessId)).Allowed);

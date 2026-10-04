@@ -1,6 +1,7 @@
 using Redline.Core.Corrections;
 using Redline.Core.Interfaces;
 using Redline.Core.Models;
+using Redline.Core.Settings;
 
 namespace Redline.Core.Pipeline;
 
@@ -19,6 +20,8 @@ public sealed class IssueCacheManager
     private readonly int _capacity;
     private readonly object _gate = new();
 
+    private volatile WritingSettings _writing = new();
+
     // Most recently updated last.
     private readonly LinkedList<(string SurfaceId, IssueSet Raw)> _entries = new();
 
@@ -31,6 +34,13 @@ public sealed class IssueCacheManager
         // Filter changes don't need re-analysis: re-publish every cached surface through the new filters.
         _dictionary.Changed += RepublishAll;
         _ignores.Changed += RepublishAll;
+    }
+
+    /// <summary>Which categories to show; re-publishes every cached surface through the new filter.</summary>
+    public void SetWriting(WritingSettings writing)
+    {
+        _writing = writing;
+        RepublishAll();
     }
 
     /// <summary>Raised (on the caller's thread) with the filtered issues whenever a surface's set changes.</summary>
@@ -99,9 +109,20 @@ public sealed class IssueCacheManager
         return kept.Count == raw.Issues.Count ? raw : new IssueSet(kept, raw.SnapshotVersion);
     }
 
-    private bool IsFilteredOut(TextIssue issue) =>
-        (issue.Category == IssueCategory.Spelling && _dictionary.Contains(issue.OriginalText)) ||
-        _ignores.IsIgnored(issue);
+    private bool IsFilteredOut(TextIssue issue)
+    {
+        var writing = _writing;
+        bool categoryOff = issue.Category switch
+        {
+            IssueCategory.Spelling => !writing.Spelling,
+            IssueCategory.Grammar or IssueCategory.Punctuation => !writing.Grammar,
+            IssueCategory.Style => !writing.StyleSuggestions,
+            _ => false,
+        };
+        return categoryOff ||
+               (issue.Category == IssueCategory.Spelling && _dictionary.Contains(issue.OriginalText)) ||
+               _ignores.IsIgnored(issue);
+    }
 
     /// <summary>Caller holds _gate.</summary>
     private LinkedListNode<(string SurfaceId, IssueSet Raw)>? Find(string surfaceId)

@@ -30,12 +30,26 @@ public sealed partial class SecurityFilter
     /// <summary>Class names of terminal input surfaces: xterm.js (VS Code and other Electron IDEs), Windows Terminal, conhost.</summary>
     private static readonly string[] TerminalClasses = ["xterm-helper-textarea", "TermControl", "ConsoleWindowClass"];
 
-    private readonly HashSet<string> _excludedProcesses;
+    private readonly HashSet<string> _builtInExclusions;
+    private volatile HashSet<string> _excludedProcesses;
     private readonly int _ownProcessId = Environment.ProcessId;
 
+    /// <param name="excludedProcesses">Built-in exclusions; defaults to <see cref="DefaultExcludedProcesses"/>. Never removable.</param>
     public SecurityFilter(IEnumerable<string>? excludedProcesses = null)
     {
-        _excludedProcesses = new HashSet<string>(excludedProcesses ?? DefaultExcludedProcesses, StringComparer.OrdinalIgnoreCase);
+        _builtInExclusions = new HashSet<string>(excludedProcesses ?? DefaultExcludedProcesses, StringComparer.OrdinalIgnoreCase);
+        _excludedProcesses = new HashSet<string>(_builtInExclusions, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The built-in list (password managers, credential prompts).</summary>
+    public IReadOnlyCollection<string> BuiltInExclusions => _builtInExclusions;
+
+    /// <summary>Replaces the user's extra exclusions. The built-in list always stays in force.</summary>
+    public void SetUserExclusions(IEnumerable<string> processes)
+    {
+        var combined = new HashSet<string>(_builtInExclusions, StringComparer.OrdinalIgnoreCase);
+        combined.UnionWith(processes);
+        _excludedProcesses = combined;
     }
 
     public SecurityDecision Evaluate(ElementInfo info)

@@ -61,6 +61,7 @@ public sealed class AnalysisPipeline : IDisposable
     {
         _analyzers = analyzers.ToList();
         _options = options ?? new AnalysisPipelineOptions();
+        _debounceTicks = _options.Debounce.Ticks;
         _logger = logger ?? NullLogger<AnalysisPipeline>.Instance;
     }
 
@@ -68,6 +69,15 @@ public sealed class AnalysisPipeline : IDisposable
     public event EventHandler<AnalysisResult>? AnalysisCompleted;
 
     public IReadOnlyList<ITextAnalyzer> Analyzers => _analyzers;
+
+    /// <summary>Quiet period before analysis; adjustable at runtime (applies to the next submit).</summary>
+    public TimeSpan Debounce
+    {
+        get => TimeSpan.FromTicks(Interlocked.Read(ref _debounceTicks));
+        set => Interlocked.Exchange(ref _debounceTicks, Math.Max(0, value.Ticks));
+    }
+
+    private long _debounceTicks;
 
     /// <summary>Schedules analysis of <paramref name="snapshot"/>, superseding any pending request.</summary>
     public void Submit(TextSurfaceContext surface, TextSnapshot snapshot)
@@ -126,7 +136,7 @@ public sealed class AnalysisPipeline : IDisposable
     {
         try
         {
-            await Task.Delay(_options.Debounce, token).ConfigureAwait(false);
+            await Task.Delay(Debounce, token).ConfigureAwait(false);
             await _runGate.WaitAsync(token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
