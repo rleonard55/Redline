@@ -15,7 +15,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 2 Corrections (engine, popup, ignore/dictionary) | done | 830aaa4 |
 | 3 Inline squiggle overlay | done | 4a5bb77 |
 | 4 Compatibility hardening | done | 2fa0c5f, 02bbf49 |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done; Settings/tray live checks pass | 9a62723, 2ad6818, 52f4216, 5db7d84, d53a042 |
+| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done; auto-update + third-party notices done; Settings/tray live checks pass | 9a62723, 2ad6818, 52f4216, 5db7d84, d53a042; release v0.6.0 |
 | 6 Optional AI | not started | |
 
 ### Phase 5 — part 2 (done), how it fits together
@@ -96,9 +96,10 @@ list of app quirks and how each is handled. Read both before changing behavior.
   ANSI, so build non-ASCII strings with `[char]0x2014` etc. Win11 tray buttons are named "<app> <tooltip>".
 
 ### Phase 5 — next steps, in order
-1. Verify the updater against a real release: v0.6.0 published 2026-10-04 (user approved); the user installs it by
-   hand (their 0.5.2 test install has no updater), then the next release exercises download + install.
-2. Phase 5 wrap-up, then Phase 6 (optional AI) if wanted.
+1. Phase 5 wrap-up (it is functionally complete), then Phase 6 (optional AI) if the user wants it.
+   Updater verified live 2026-10-04: installed 0.5.9 test build -> Settings > About > Check now found v0.6.0,
+   downloaded + digest matched, Install closed 0.5.9 and 0.6.0 relaunched in ~10 s. The user now runs the
+   installed 0.6.0 (start with Windows on). Future releases: bump Version, commit, push, release.ps1 (ask first).
 
 Deferred (documented in docs/compatibility.md): VS Code editor support (needs a VS Code extension);
 multi-monitor / non-100% DPI is implemented but untested (user has one 100% monitor).
