@@ -3,10 +3,14 @@ using Redline.Windows.Automation;
 
 namespace Redline.Windows;
 
-public readonly record struct SecurityDecision(bool Allowed, string Reason)
+/// <param name="Sensitive">
+/// True when reading must stop immediately (credentials, excluded apps). False for blocks that only
+/// mean "nothing to check here" (read-only, disabled), where a brief grace period is harmless.
+/// </param>
+public readonly record struct SecurityDecision(bool Allowed, string Reason, bool Sensitive = false)
 {
     public static SecurityDecision Allow { get; } = new(true, "Allowed");
-    public static SecurityDecision Block(string reason) => new(false, reason);
+    public static SecurityDecision Block(string reason, bool sensitive = true) => new(false, reason, sensitive);
 }
 
 /// <summary>
@@ -22,6 +26,9 @@ public sealed partial class SecurityFilter
         "Dashlane.exe", "Enpass.exe", "RoboForm.exe", "NordPass.exe",
         "CredentialUIBroker.exe", "consent.exe", "LogonUI.exe", "LockApp.exe",
     ];
+
+    /// <summary>Class names of terminal input surfaces: xterm.js (VS Code and other Electron IDEs), Windows Terminal, conhost.</summary>
+    private static readonly string[] TerminalClasses = ["xterm-helper-textarea", "TermControl", "ConsoleWindowClass"];
 
     private readonly HashSet<string> _excludedProcesses;
     private readonly int _ownProcessId = Environment.ProcessId;
@@ -45,11 +52,15 @@ public sealed partial class SecurityFilter
         if (SensitiveId().IsMatch(info.AutomationId) || SensitiveName().IsMatch(info.Name))
             return SecurityDecision.Block("Looks like a credential field");
 
+        // Terminals receive whatever is typed at sudo/ssh/password prompts, and are never prose.
+        if (TerminalClasses.Any(c => info.ClassName.Contains(c, StringComparison.Ordinal)))
+            return SecurityDecision.Block("Terminal input");
+
         if (!info.IsEnabled)
-            return SecurityDecision.Block("Control is disabled");
+            return SecurityDecision.Block("Control is disabled", sensitive: false);
 
         if (info.SupportsValuePattern && info.ValueIsReadOnly)
-            return SecurityDecision.Block("Control is read-only");
+            return SecurityDecision.Block("Control is read-only", sensitive: false);
 
         return SecurityDecision.Allow;
     }

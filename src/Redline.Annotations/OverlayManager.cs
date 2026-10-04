@@ -19,15 +19,17 @@ namespace Redline.Annotations;
 /// </summary>
 /// <remarks>
 /// Triggers: new issues, text edits (existing squiggles shift immediately; the edited word's is
-/// dropped until re-analysis), window move/resize/minimize events, and a periodic refresh that
-/// catches scrolling, which raises no reliable window event. All state lives on the UI thread;
-/// geometry queries run on the UIA thread and are re-validated when they return.
+/// dropped until re-analysis), window move/resize/minimize events, and a periodic refresh.
+/// Scrolling raises no reliable event, so a cheap 100 ms probe re-measures one squiggled word (the
+/// anchor): if it moved, squiggles hide at once and come back when it holds still. All state lives
+/// on the UI thread; geometry queries run on the UIA thread and are re-validated when they return.
 /// </remarks>
 public sealed class OverlayManager : IDisposable
 {
     private const int MaxIssuesDrawn = 150;
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan AnchorInterval = TimeSpan.FromMilliseconds(100);
 
     private readonly Dispatcher _ui;
     private readonly SurfaceTracker _tracker;
@@ -37,6 +39,7 @@ public sealed class OverlayManager : IDisposable
     private readonly ILogger _logger;
     private readonly DispatcherTimer _refresh;
     private readonly DispatcherTimer _settle;
+    private readonly DispatcherTimer _anchorTimer;
     private readonly int _ownProcessId = Environment.ProcessId;
 
     // UI thread only.
@@ -49,6 +52,11 @@ public sealed class OverlayManager : IDisposable
     private bool _layoutAgain;
     private int _lastSpanCount = -1;
 
+    // Scroll detection: one drawn word's range and where it was when last drawn.
+    private (TextRange Range, TextBounds Rect)? _anchor;
+    private bool _scrolling;
+    private bool _anchorCheckRunning;
+
     public OverlayManager(Dispatcher ui, SurfaceTracker tracker, DocumentState document, IssueCacheManager cache,
         WindowEventMonitor windowEvents, ILogger<OverlayManager>? logger = null)
     {
@@ -59,13 +67,19 @@ public sealed class OverlayManager : IDisposable
         _windowEvents = windowEvents;
         _logger = logger ?? NullLogger<OverlayManager>.Instance;
 
-        _refresh = new DispatcherTimer(RefreshInterval, DispatcherPriority.Background, (_, _) => RequestLayout(), _ui);
-        _settle = new DispatcherTimer(SettleDelay, DispatcherPriority.Normal, (sender, _) =>
+        // Note: the DispatcherTimer constructor overload that takes a callback also *starts* the timer,
+        // so these use the (priority, dispatcher) overload and are started explicitly in Start().
+        _refresh = new DispatcherTimer(DispatcherPriority.Background, _ui) { Interval = RefreshInterval };
+        _refresh.Tick += (_, _) => RequestLayout();
+        _anchorTimer = new DispatcherTimer(DispatcherPriority.Background, _ui) { Interval = AnchorInterval };
+        _anchorTimer.Tick += (_, _) => CheckAnchor();
+        _settle = new DispatcherTimer(DispatcherPriority.Normal, _ui) { Interval = SettleDelay };
+        _settle.Tick += (_, _) =>
         {
-            ((DispatcherTimer)sender!).Stop();
+            _settle.Stop();
             _moving = false;
             RequestLayout();
-        }, _ui);
+        };
     }
 
     /// <summary>Call on the UI thread.</summary>
@@ -76,11 +90,13 @@ public sealed class OverlayManager : IDisposable
         _cache.IssuesChanged += (_, e) => _ui.BeginInvoke(() => OnIssuesChanged(e));
         _windowEvents.Changed += (hwnd, change) => _ui.BeginInvoke(() => OnWindowChanged(hwnd, change));
         _refresh.Start();
+        _anchorTimer.Start();
     }
 
     private async void OnSurfaceChanged(SurfaceChangedEventArgs e)
     {
         Hide();
+        _scrolling = false;
         _issues = null;
         _adapter = e.Surface is null ? null : _tracker.CurrentAdapter;
         _root = IntPtr.Zero;
@@ -103,12 +119,14 @@ public sealed class OverlayManager : IDisposable
     {
         if (_adapter?.Context.SurfaceId != e.SurfaceId) return;
         _issues = e.Issues;
+        _anchor = null; // offsets changed; the next layout picks a new anchor
         RequestLayout();
     }
 
     private void OnSnapshotChanged(SnapshotChangedEventArgs e)
     {
         if (_adapter?.Context.SurfaceId != e.Surface.SurfaceId || _issues is null) return;
+        _anchor = null; // its offsets refer to the old text
 
         // Shift squiggles to follow the edit right away instead of blanking them all until the
         // re-analysis lands. Anything touching the edit is dropped: that word is being changed.
@@ -192,6 +210,9 @@ public sealed class OverlayManager : IDisposable
         var issues = _issues;
         var snapshot = _document.Current;
 
+        if (_scrolling)
+            return; // CheckAnchor re-requests layout once the text holds still
+
         if (adapter is null || issues is null || snapshot is null || _moving || _root == IntPtr.Zero ||
             issues.SnapshotVersion != snapshot.Version || issues.Issues.Count == 0)
         {
@@ -201,7 +222,9 @@ public sealed class OverlayManager : IDisposable
 
         // Only while the target is in front. Redline's own popup/diagnostics being in front leaves
         // the squiggles as they are (they're what the user is acting on).
-        var foreground = GetForegroundWindow();
+        // Root of the foreground window: Chromium can report its page child window as foreground.
+        // That's still the target for display purposes (typing uses a stricter check).
+        var foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
         if (foreground != _root)
         {
             GetWindowThreadProcessId(foreground, out uint pid);
@@ -211,7 +234,13 @@ public sealed class OverlayManager : IDisposable
 
         var sw = Stopwatch.StartNew();
         var surface = await adapter.GetSurfaceBoundsAsync();
-        var drawn = issues.Issues.Take(MaxIssuesDrawn).ToList();
+        // Spelling and grammar sometimes flag the same word; draw one squiggle per range, not two
+        // overlapping ones (spelling wins, then grammar, punctuation, style).
+        var drawn = issues.Issues
+            .GroupBy(i => i.Range)
+            .Select(g => g.OrderBy(i => CategoryPriority(i.Category)).First())
+            .Take(MaxIssuesDrawn)
+            .ToList();
         var bounds = await adapter.GetBoundsAsync(drawn.Select(i => i.Range).ToList(), snapshot.Text);
 
         // Anything may have changed while we were away on the UIA thread.
@@ -238,6 +267,9 @@ public sealed class OverlayManager : IDisposable
         _window ??= new OverlayWindow();
         _window.ShowAt(surface.Value, spans, _root);
 
+        int anchorIndex = bounds.ToList().FindIndex(b => b.Count > 0);
+        _anchor = anchorIndex >= 0 ? (drawn[anchorIndex].Range, bounds[anchorIndex][0]) : null;
+
         if (spans.Count != _lastSpanCount)
         {
             _lastSpanCount = spans.Count;
@@ -246,6 +278,63 @@ public sealed class OverlayManager : IDisposable
                 spans.Count, drawn.Count, unplaced, sw.Elapsed.TotalMilliseconds);
         }
     }
+
+    /// <summary>Detects scrolling: re-measures the anchor word and hides squiggles while it moves.</summary>
+    private async void CheckAnchor()
+    {
+        if (_anchor is not { } anchor || _anchorCheckRunning || _layoutRunning || _moving) return;
+
+        // Only measure while the target is in front, like the layout pass. Besides being pointless
+        // otherwise, querying a Win32 edit's text geometry through UIA pulls focus back to it — which
+        // closed the suggestion popup the moment it opened.
+        if (GetAncestor(GetForegroundWindow(), GA_ROOT) != _root) return;
+
+        var adapter = _adapter;
+        var snapshot = _document.Current;
+        if (adapter is null || snapshot is null || _issues?.SnapshotVersion != snapshot.Version) return;
+
+        _anchorCheckRunning = true;
+        try
+        {
+            var rects = (await adapter.GetBoundsAsync([anchor.Range], snapshot.Text))[0];
+            if (!ReferenceEquals(adapter, _adapter) || _anchor is null || _document.Current?.Version != snapshot.Version)
+                return;
+
+            var now = rects.Count > 0 ? rects[0] : TextBounds.Empty;
+            if (now != anchor.Rect)
+            {
+                // Moving: remember where it is now and keep squiggles hidden until it stops.
+                _anchor = (anchor.Range, now);
+                if (!_scrolling)
+                {
+                    _scrolling = true;
+                    _window?.HideOverlay();
+                }
+            }
+            else if (_scrolling)
+            {
+                _scrolling = false;
+                RequestLayout();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Anchor check failed");
+        }
+        finally
+        {
+            _anchorCheckRunning = false;
+        }
+    }
+
+    private static int CategoryPriority(IssueCategory category) => category switch
+    {
+        IssueCategory.Spelling => 0,
+        IssueCategory.Grammar => 1,
+        IssueCategory.Punctuation => 2,
+        IssueCategory.Style => 3,
+        _ => 4,
+    };
 
     private void Hide()
     {
@@ -257,9 +346,12 @@ public sealed class OverlayManager : IDisposable
     {
         _refresh.Stop();
         _settle.Stop();
+        _anchorTimer.Stop();
         _window?.Close();
     }
 
+    private const uint GA_ROOT = 2;
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 }

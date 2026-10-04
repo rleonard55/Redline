@@ -37,6 +37,14 @@ public sealed class SurfaceTracker : IDisposable
     private volatile ITextSurfaceAdapter? _adapter;
     private TextChangeWatcher? _watcher;
     private string? _lastDetachReason;
+    private long _deferredDetach; // id of the pending deferred detach; 0 = none (UIA thread only)
+    private long _detachSequence;
+
+    /// <summary>
+    /// How long focus may sit on a non-text element in the same app before we let go of the surface.
+    /// Web apps and IDEs bounce focus through their page/container for a moment when re-activated.
+    /// </summary>
+    private static readonly TimeSpan DetachGrace = TimeSpan.FromMilliseconds(300);
 
     public SurfaceTracker(
         UiaDispatcher uia,
@@ -217,12 +225,17 @@ public sealed class SurfaceTracker : IDisposable
             return;
 
         if (_adapter is not null && _adapter.Context.SurfaceId == info.SurfaceId)
+        {
+            _deferredDetach = 0; // focus came back before the grace period ran out
             return;
+        }
 
         var decision = _security.Evaluate(info);
         if (!decision.Allowed)
         {
-            Detach($"Blocked: {decision.Reason} ({info.ProcessName} {info.ControlType}/{info.ClassName})");
+            var reason = $"Blocked: {decision.Reason} ({info.ProcessName} {info.ControlType}/{info.ClassName})";
+            if (decision.Sensitive) Detach(reason);
+            else DetachSoon(info, reason);
             return;
         }
 
@@ -230,7 +243,7 @@ public sealed class SurfaceTracker : IDisposable
         if (factory is null)
         {
             // Control type/class/process carry no user text and are what's needed to diagnose a miss.
-            Detach($"No text surface focused ({info.ProcessName} {info.ControlType}/{info.ClassName})");
+            DetachSoon(info, $"No text surface focused ({info.ProcessName} {info.ControlType}/{info.ClassName})");
             return;
         }
 
@@ -240,6 +253,7 @@ public sealed class SurfaceTracker : IDisposable
     /// <summary>UIA thread only.</summary>
     private void Attach(AutomationElement element, ElementInfo info, ITextSurfaceAdapterFactory factory)
     {
+        _deferredDetach = 0;
         DetachCore();
 
         var adapter = factory.Create(_uia, element, info);
@@ -287,9 +301,42 @@ public sealed class SurfaceTracker : IDisposable
         }
     }
 
+    /// <summary>
+    /// UIA thread only. Detaches after <see cref="DetachGrace"/> if focus moved to a non-text element of
+    /// the same app; immediately otherwise. Never used for sensitive blocks.
+    /// </summary>
+    private void DetachSoon(ElementInfo focused, string reason)
+    {
+        if (_adapter is null || focused.ProcessId != _adapter.Context.ProcessId)
+        {
+            Detach(reason);
+            return;
+        }
+
+        long id = ++_detachSequence;
+        _deferredDetach = id;
+        _logger.LogDebug("Deferring detach {Grace} ms: {Reason}", DetachGrace.TotalMilliseconds, reason);
+        _ = Task.Delay(DetachGrace).ContinueWith(_ =>
+        {
+            try
+            {
+                _uia.InvokeAsync(() =>
+                {
+                    if (_deferredDetach == id)
+                        Detach(reason);
+                });
+            }
+            catch (ObjectDisposedException)
+            {
+                // shutting down
+            }
+        }, TaskScheduler.Default);
+    }
+
     /// <summary>UIA thread only.</summary>
     private void Detach(string reason)
     {
+        _deferredDetach = 0;
         bool hadSurface = _adapter is not null;
         DetachCore();
         _document.Reset(null);

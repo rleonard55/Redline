@@ -47,6 +47,72 @@ public static class CorrectionMath
         return candidates;
     }
 
+    /// <summary>
+    /// How far (in provider units) a provider's offsets could plausibly have drifted from UTF-16 by
+    /// <paramref name="offset"/>: a few units per embedded object (U+FFFC) and one per line break
+    /// before it. Zero when there are neither, i.e. when the fixed conventions are the whole story.
+    /// </summary>
+    public static int MaxPlausibleDrift(string text, int offset)
+    {
+        int objects = 0, breaks = 0;
+        for (int i = 0; i < offset && i < text.Length; i++)
+        {
+            if (text[i] == ObjectReplacement) objects++;
+            else if (IsLineBreak(text[i])) breaks++;
+        }
+        return objects == 0 && breaks == 0 ? 0 : Math.Min(64, 3 * objects + breaks + 2);
+    }
+
+    /// <summary>Drift values to try: the hint first, then spiraling outward, within the given maximum.</summary>
+    public static IEnumerable<int> DriftOrder(int hint, int max)
+    {
+        hint = Math.Clamp(hint, -max, max);
+        yield return hint;
+        for (int step = 1; step <= 2 * max; step++)
+        {
+            int up = hint + step, down = hint - step;
+            if (up <= max) yield return up;
+            if (down >= -max) yield return down;
+            if (up > max && down < -max) yield break;
+        }
+    }
+
+    /// <summary>
+    /// Up to <paramref name="maxContext"/> characters immediately before and after <paramref name="range"/>,
+    /// stopping at line breaks and embedded objects (whose unit length is provider-specific).
+    /// </summary>
+    public static (string Before, string After) ContextAround(string text, TextRange range, int maxContext = 6)
+    {
+        int b = range.Start;
+        while (b > 0 && range.Start - b < maxContext && !IsBoundary(text[b - 1])) b--;
+        int a = range.End;
+        while (a < text.Length && a - range.End < maxContext && !IsBoundary(text[a])) a++;
+        return (text[b..range.Start], text[range.End..a]);
+    }
+
+    /// <summary>
+    /// True if <paramref name="actual"/> equals <paramref name="expected"/> apart from whitespace and
+    /// line breaks at the very end of the document. Rich editors represent an emptied last paragraph
+    /// differently (Chromium: a trailing space instead of a line break); every other character must
+    /// still match exactly.
+    /// </summary>
+    public static bool EquivalentForVerification(string actual, string expected) =>
+        actual == expected || TrimTrailingBlank(actual) == TrimTrailingBlank(expected);
+
+    private static string TrimTrailingBlank(string s)
+    {
+        int end = s.Length;
+        while (end > 0 && (char.IsWhiteSpace(s[end - 1]) || IsLineBreak(s[end - 1]))) end--;
+        return s[..end];
+    }
+
+    /// <summary>U+FFFC, which UIA text uses for embedded objects such as images.</summary>
+    private const char ObjectReplacement = (char)0xFFFC;
+
+    private static bool IsLineBreak(char c) => c is (char)0x0A or (char)0x0D or (char)0x0B or (char)0x2029;
+
+    private static bool IsBoundary(char c) => c == ObjectReplacement || IsLineBreak(c);
+
     private static int Count(string text, int from, int to, bool pairsAsOne, bool crlfAsOne)
     {
         int units = to - from;

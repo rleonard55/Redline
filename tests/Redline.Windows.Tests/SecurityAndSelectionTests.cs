@@ -8,9 +8,10 @@ public class SecurityFilterTests
 {
     private static ElementInfo Info(
         string process = "notepad.exe", bool isPassword = false, string automationId = "", string name = "",
-        bool enabled = true, bool value = true, bool readOnly = false, int pid = 999_999) => new()
+        bool enabled = true, bool value = true, bool readOnly = false, int pid = 999_999, string className = "") => new()
     {
         RuntimeId = "1.2.3",
+        ClassName = className,
         ProcessId = pid,
         ProcessName = process,
         ControlType = "Edit",
@@ -56,6 +57,28 @@ public class SecurityFilterTests
     }
 
     [Fact]
+    public void CredentialBlocks_AreSensitive_ReadOnlyAndDisabledAreNot()
+    {
+        // Sensitive blocks must detach immediately; the others may use the focus-bounce grace period.
+        Assert.True(_filter.Evaluate(Info(isPassword: true)).Sensitive);
+        Assert.True(_filter.Evaluate(Info(automationId: "txtPassword")).Sensitive);
+        Assert.True(_filter.Evaluate(Info("KeePass.exe")).Sensitive);
+        Assert.False(_filter.Evaluate(Info(readOnly: true)).Sensitive);
+        Assert.False(_filter.Evaluate(Info(enabled: false)).Sensitive);
+    }
+
+    [Theory]
+    [InlineData("xterm-helper-textarea")] // VS Code / Antigravity integrated terminal
+    [InlineData("TermControl")]           // Windows Terminal
+    [InlineData("ConsoleWindowClass")]    // conhost
+    public void TerminalInput_IsBlockedAsSensitive(string className)
+    {
+        var decision = _filter.Evaluate(Info("Code.exe", className: className));
+        Assert.False(decision.Allowed);
+        Assert.True(decision.Sensitive);
+    }
+
+    [Fact]
     public void OwnProcess_IsBlocked()
     {
         Assert.False(_filter.Evaluate(Info(pid: Environment.ProcessId)).Allowed);
@@ -72,10 +95,11 @@ public class SecurityFilterTests
 
 public class AdapterSelectorTests
 {
-    private static ElementInfo Info(string controlType, string framework, bool text, bool value, bool readOnly = false, string className = "") => new()
+    private static ElementInfo Info(string controlType, string framework, bool text, bool value, bool readOnly = false, string className = "", bool focusable = true) => new()
     {
         RuntimeId = "1",
         ClassName = className,
+        IsKeyboardFocusable = focusable,
         ControlType = controlType,
         FrameworkId = framework,
         SupportsTextPattern = text,
@@ -104,6 +128,15 @@ public class AdapterSelectorTests
     public void NonEditableSurfaces_AreRejected(string controlType, string framework, bool text, bool value, bool readOnly)
     {
         Assert.Null(_selector.Select(Info(controlType, framework, text, value, readOnly)));
+    }
+
+    [Fact]
+    public void ChromiumContentEditableGroup_IsHandled_ButFocusableCardIsNot()
+    {
+        Assert.NotNull(_selector.Select(Info("Group", "Chrome", text: true, value: false)));               // contenteditable div
+        Assert.Null(_selector.Select(Info("Group", "Chrome", text: false, value: false)));                 // div tabindex=0
+        Assert.Null(_selector.Select(Info("Group", "Chrome", text: true, value: false, focusable: false))); // not focusable
+        Assert.Null(_selector.Select(Info("Group", "Win32", text: true, value: false)));                   // only trusted for Chromium
     }
 
     [Theory]

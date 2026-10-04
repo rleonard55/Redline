@@ -50,6 +50,12 @@ public sealed class GenericUiaAdapterFactory : ITextSurfaceAdapterFactory
                     return info.SupportsValuePattern && !info.ValueIsReadOnly;
                 return info.SupportsTextPattern; // Word (_WwG), Notepad (RichEditD2DPT)
 
+            case "Group":
+                // A contenteditable element without an ARIA role surfaces as a Group. Chromium only
+                // gives TextPattern to editable roots (plus the page Document, handled above), so a
+                // focusable Chromium Group with TextPattern is an editor; a focusable card isn't.
+                return info.FrameworkId == "Chrome" && info.SupportsTextPattern && info.IsKeyboardFocusable;
+
             default:
                 return false;
         }

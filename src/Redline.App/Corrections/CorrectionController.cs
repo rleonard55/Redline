@@ -124,6 +124,9 @@ public sealed class CorrectionController
         switch (choice.Kind)
         {
             case PopupChoiceKind.Suggestion:
+                // The popup just closed and handed activation back to the target; Chromium drops
+                // keystrokes that arrive mid-hand-back (the engine then falls back to paste).
+                await Task.Delay(150);
                 var result = await _engine.ApplyAsync(adapter, issue, choice.Replacement!);
                 if (!result.Succeeded)
                     Notify?.Invoke(result.Message, result.Outcome == CorrectionOutcome.Unverified);

@@ -68,7 +68,18 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
     public Task<string?> ReadTextAsync(CancellationToken ct = default) => InvokeOrNull(() =>
     {
         if (_text is not null)
-            return _text.DocumentRange.GetText(MaxReadChars);
+        {
+            var text = _text.DocumentRange.GetText(MaxReadChars);
+
+            // Chromium exposes an empty input's placeholder ("Subject", "Type a message") through
+            // TextPattern while ValuePattern correctly reports "". Analyzing or "correcting" a
+            // placeholder would be wrong, so trust the value. Worst case if this misfires: a field
+            // goes unchecked — never a bad edit.
+            if (text.Length > 0 && _value is not null && Context.FrameworkId == "Chrome" && _value.Current.Value.Length == 0)
+                return string.Empty;
+
+            return text;
+        }
 
         if (_value is not null)
         {
@@ -121,32 +132,79 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
         {
             if (_text is null) return null;
             var all = new List<IReadOnlyList<TextBounds>>(ranges.Count);
+            int driftHint = 0; // drift tends to grow monotonically through a document
             foreach (var range in ranges)
-                all.Add(VerifiedBounds(_text, range, documentText));
+                all.Add(VerifiedBounds(_text, range, documentText, ref driftHint));
             return all;
         }, ct).ConfigureAwait(false);
 
         return result ?? ranges.Select(_ => (IReadOnlyList<TextBounds>)Array.Empty<TextBounds>()).ToList();
     }
 
-    /// <summary>UIA thread only. Rectangles for the first unit mapping whose text matches; else none.</summary>
-    private static IReadOnlyList<TextBounds> VerifiedBounds(TextPattern text, TextRange range, string documentText)
+    /// <summary>UIA thread only. Rectangles for the verified range; none if it can't be located exactly.</summary>
+    private static IReadOnlyList<TextBounds> VerifiedBounds(TextPattern text, TextRange range, string documentText, ref int driftHint)
     {
-        if (range.Start < 0 || range.Length <= 0 || range.End > documentText.Length)
-            return Array.Empty<TextBounds>();
+        var r = FindRange(text, documentText, range, ref driftHint);
+        if (r is null) return Array.Empty<TextBounds>();
+        return r.GetBoundingRectangles()
+            .Select(rect => new TextBounds(rect.X, rect.Y, rect.Width, rect.Height))
+            .Where(b => !b.IsEmpty)
+            .ToList();
+    }
 
+    /// <summary>
+    /// UIA thread only. The provider range whose text is exactly <paramref name="range"/> of
+    /// <paramref name="documentText"/>, or null. First tries the fixed unit conventions; if none fits
+    /// (Chromium counts some embedded objects and paragraph breaks as more than one unit, e.g. after
+    /// an email signature's images), searches nearby offsets. A drift match must also reproduce a few
+    /// characters of surrounding context, so a nearby repeat of the same word can't be picked.
+    /// </summary>
+    private static TextPatternRange? FindRange(TextPattern text, string documentText, TextRange range, ref int driftHint)
+    {
+        if (range.Start < 0 || range.Length <= 0 || range.End > documentText.Length) return null;
         var expected = documentText.Substring(range.Start, range.Length);
+
         foreach (var candidate in CorrectionMath.ProviderUnitCandidates(documentText, range))
         {
             var r = CreateRange(text, candidate);
-            if (r is null || r.GetText(-1) != expected)
-                continue;
-            return r.GetBoundingRectangles()
-                .Select(rect => new TextBounds(rect.X, rect.Y, rect.Width, rect.Height))
-                .Where(b => !b.IsEmpty)
-                .ToList();
+            if (r is not null && r.GetText(-1) == expected)
+                return r;
         }
-        return Array.Empty<TextBounds>();
+
+        int maxDrift = CorrectionMath.MaxPlausibleDrift(documentText, range.Start);
+        if (maxDrift == 0) return null;
+
+        var (before, after) = CorrectionMath.ContextAround(documentText, range);
+        foreach (int drift in CorrectionMath.DriftOrder(driftHint, maxDrift))
+        {
+            if (range.Start + drift < 0) continue;
+            var r = CreateRange(text, new TextRange(range.Start + drift, range.Length));
+            if (r is null || r.GetText(-1) != expected || !ContextMatches(r, before, after))
+                continue;
+            driftHint = drift;
+            return r;
+        }
+        return null;
+    }
+
+    /// <summary>UIA thread only. True if the text just before and after <paramref name="r"/> reads as given.</summary>
+    private static bool ContextMatches(TextPatternRange r, string before, string after)
+    {
+        if (before.Length > 0)
+        {
+            var b = r.Clone();
+            b.MoveEndpointByRange(TextPatternRangeEndpoint.End, b, TextPatternRangeEndpoint.Start);
+            b.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -before.Length);
+            if (b.GetText(-1) != before) return false;
+        }
+        if (after.Length > 0)
+        {
+            var a = r.Clone();
+            a.MoveEndpointByRange(TextPatternRangeEndpoint.Start, a, TextPatternRangeEndpoint.End);
+            a.MoveEndpointByUnit(TextPatternRangeEndpoint.End, TextUnit.Character, after.Length);
+            if (a.GetText(-1) != after) return false;
+        }
+        return true;
     }
 
     public Task<TextBounds?> GetSurfaceBoundsAsync(CancellationToken ct = default) => InvokeOrNull<TextBounds?>(() =>
@@ -196,12 +254,14 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
 
     public Task FocusAsync(CancellationToken ct = default) => InvokeOrNull<object?>(() =>
     {
-        // Bring the top-level window forward first: for Chromium content SetFocus alone only moves
-        // focus within the page. Works when Redline is foreground (popup/diagnostics/hotkey).
+        // SetFocus first, then make sure the top-level window is foreground: for Chromium content
+        // SetFocus only moves focus within the page, and can leave the page's child window
+        // (Chrome_RenderWidgetHostHWND) as the foreground window, where keystrokes don't reach the
+        // page. Works when Redline is foreground (popup/diagnostics/hotkey).
+        _element.SetFocus();
         var root = TopLevelWindow();
         if (root != IntPtr.Zero && GetForegroundWindow() != root)
             SetForegroundWindow(root);
-        _element.SetFocus();
         return null;
     }, ct);
 
@@ -236,19 +296,14 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
         if (_text is null || range.Start < 0 || range.End > documentText.Length) return false;
         var expected = documentText.Substring(range.Start, range.Length);
 
-        // Try each plausible mapping from UTF-16 offsets to this provider's character units and
-        // select the first whose text matches; only then touch the user's selection.
+        // Locate the exact range first (see FindRange); only then touch the user's selection.
         bool selected = await InvokeOrNull<bool?>(() =>
         {
-            foreach (var candidate in CorrectionMath.ProviderUnitCandidates(documentText, range))
-            {
-                var r = CreateRange(_text, candidate);
-                if (r is null || r.GetText(-1) != expected)
-                    continue;
-                r.Select();
-                return true;
-            }
-            return false;
+            int driftHint = 0;
+            var r = FindRange(_text, documentText, range, ref driftHint);
+            if (r is null) return false;
+            r.Select();
+            return true;
         }, ct).ConfigureAwait(false) ?? false;
         if (!selected) return false;
 

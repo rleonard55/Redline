@@ -113,6 +113,7 @@ public sealed class ReplacementEngine
             : [ReplacementStrategy.SetValue]);
 
         string lastReason = "No editing method is available for this field.";
+        bool attempted = false;
         foreach (var strategy in strategies)
         {
             if (strategy == ReplacementStrategy.SelectAndType && replacement.IndexOfAny(['\r', '\n']) >= 0)
@@ -121,7 +122,10 @@ public sealed class ReplacementEngine
             var (prepared, reason, cleanup) = await PrepareAsync(strategy, adapter, range, original, replacement, ct).ConfigureAwait(false);
             if (!prepared)
             {
-                lastReason = reason;
+                // Keep the first failure: later strategies usually fail for the same root cause
+                // ("can't select") or for a reason that doesn't apply ("paste can't delete").
+                if (!attempted) lastReason = reason;
+                attempted = true;
                 continue;
             }
 
@@ -244,7 +248,7 @@ public sealed class ReplacementEngine
         {
             await Task.Delay(40, ct).ConfigureAwait(false);
             var text = await adapter.ReadTextAsync(ct).ConfigureAwait(false);
-            if (text == expected)
+            if (text is not null && CorrectionMath.EquivalentForVerification(text, expected))
                 return Verification.Matched;
 
             // Something other than our edit, and it's stopped changing: no point waiting longer.
