@@ -27,6 +27,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Redline.Core\Redline.Core.csproj" />
     <ProjectReference Include="..\Redline.Windows\Redline.Windows.csproj" />
+    <ProjectReference Include="..\Redline.Annotations\Redline.Annotations.csproj" />
     <ProjectReference Include="..\Redline.Analysis\Redline.Analysis.csproj" />
     <ProjectReference Include="..\Redline.Analysis.Harper\Redline.Analysis.Harper.csproj" />
   </ItemGroup>

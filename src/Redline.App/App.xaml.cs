@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Redline.Analysis;
 using Redline.Analysis.Harper;
+using Redline.Annotations;
 using Redline.App.Corrections;
 using Redline.App.Diagnostics;
 using Redline.App.Logging;
@@ -106,6 +107,8 @@ public partial class App : Application
             _tray.Notify("No suggestion hotkey is available; double-click issues in the Diagnostics window instead.", true);
         _tray.SetHotkeyHint(HotkeyName);
 
+        _services.GetRequiredService<OverlayManager>().Start();
+
         try
         {
             await tracker.StartAsync();
@@ -157,6 +160,13 @@ public partial class App : Application
             new ReplacementOptions(), sp.GetRequiredService<ILogger<ReplacementEngine>>()));
         services.AddSingleton<CorrectionController>();
 
+        // Annotations
+        services.AddSingleton<WindowEventMonitor>();
+        services.AddSingleton(sp => new OverlayManager(
+            Current.Dispatcher, sp.GetRequiredService<SurfaceTracker>(), sp.GetRequiredService<DocumentState>(),
+            sp.GetRequiredService<IssueCacheManager>(), sp.GetRequiredService<WindowEventMonitor>(),
+            sp.GetRequiredService<ILogger<OverlayManager>>()));
+
         // UI
         services.AddSingleton(sp => new DiagnosticsViewModel(
             Current.Dispatcher,
@@ -195,6 +205,7 @@ public partial class App : Application
         _tray?.Dispose();
 
         // Order matters: stop event sources before the UIA thread they marshal onto.
+        _services?.GetService<OverlayManager>()?.Dispose();
         _services?.GetService<SurfaceTracker>()?.Dispose();
         _services?.GetService<AnalysisPipeline>()?.Dispose();
         _services?.Dispose(); // disposes UiaDispatcher last-resolved-first

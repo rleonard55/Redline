@@ -4,8 +4,8 @@ namespace Redline.Windows.Input;
 
 /// <summary>
 /// Synthesized keyboard input via SendInput. Text is sent as KEYEVENTF_UNICODE events, which
-/// bypass keyboard layouts and dead keys. Each call submits all its events in one SendInput
-/// batch so the user's own keystrokes can't interleave with them.
+/// bypass keyboard layouts and dead keys. Key chords go out in one SendInput batch so the user's
+/// keystrokes can't interleave with them; text is paced (see <see cref="TypeTextAsync"/>).
 /// </summary>
 /// <remarks>
 /// Input goes to whatever has keyboard focus — callers must verify focus immediately before.
@@ -32,16 +32,37 @@ public static class KeyboardInput
     /// <summary>Marks Redline's own synthesized input (dwExtraInfo) so future hooks can recognize it.</summary>
     private static readonly IntPtr RedlineMarker = new(0x52444C4E); // "RDLN"
 
-    /// <summary>Types <paramref name="text"/>. Returns false if Windows rejected any of the events.</summary>
-    public static bool TypeText(string text)
+    /// <summary>Gap between typed characters; see <see cref="TypeTextAsync"/>.</summary>
+    public static readonly TimeSpan DefaultCharacterGap = TimeSpan.FromMilliseconds(10);
+
+    /// <summary>
+    /// Types <paramref name="text"/> one character per SendInput call, <paramref name="gap"/> apart.
+    /// Returns false if Windows rejected any event.
+    /// </summary>
+    /// <remarks>
+    /// Not one batch: Windows 11 Notepad defers translating VK_PACKET keystrokes at word boundaries,
+    /// and every character after a space in a batch then reads as the batch's last character
+    /// ("ab cd" arrives as "ab dd"). Measured: no gap fails 2 of 3 times, 2 ms is already reliable.
+    /// </remarks>
+    public static async Task<bool> TypeTextAsync(string text, TimeSpan? gap = null, CancellationToken ct = default)
     {
-        var inputs = new INPUT[text.Length * 2];
+        var delay = gap ?? DefaultCharacterGap;
         for (int i = 0; i < text.Length; i++)
         {
-            inputs[2 * i] = Key(0, text[i], KEYEVENTF_UNICODE);
-            inputs[2 * i + 1] = Key(0, text[i], KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+            // Keep a surrogate pair in one call so the halves can't be split.
+            int count = char.IsHighSurrogate(text[i]) && i + 1 < text.Length ? 2 : 1;
+            var inputs = new INPUT[count * 2];
+            for (int k = 0; k < count; k++)
+            {
+                inputs[2 * k] = Key(0, text[i + k], KEYEVENTF_UNICODE);
+                inputs[2 * k + 1] = Key(0, text[i + k], KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+            }
+            if (!Send(inputs)) return false;
+            i += count - 1;
+            if (i < text.Length - 1 && delay > TimeSpan.Zero)
+                await Task.Delay(delay, ct).ConfigureAwait(false);
         }
-        return Send(inputs);
+        return true;
     }
 
     /// <summary>Presses and releases <paramref name="key"/> while holding <paramref name="modifiers"/>.</summary>

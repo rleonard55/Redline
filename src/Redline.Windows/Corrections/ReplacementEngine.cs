@@ -132,7 +132,7 @@ public sealed class ReplacementEngine
                 if (strategy != ReplacementStrategy.SetValue && !await adapter.HasKeyboardFocusAsync(ct).ConfigureAwait(false))
                     return Reject("Keyboard focus moved away from the text field.");
 
-                if (!Execute(strategy, replacement))
+                if (!await ExecuteAsync(strategy, replacement, ct).ConfigureAwait(false))
                 {
                     lastReason = "Windows rejected the synthesized input.";
                     continue;
@@ -198,11 +198,11 @@ public sealed class ReplacementEngine
         }
     }
 
-    private static bool Execute(ReplacementStrategy strategy, string replacement) => strategy switch
+    private static async Task<bool> ExecuteAsync(ReplacementStrategy strategy, string replacement, CancellationToken ct) => strategy switch
     {
         ReplacementStrategy.SelectAndType => replacement.Length == 0
             ? KeyboardInput.Press(KeyboardInput.VK_DELETE)
-            : KeyboardInput.TypeText(replacement),
+            : await KeyboardInput.TypeTextAsync(replacement, ct: ct).ConfigureAwait(false),
         ReplacementStrategy.SelectAndPaste => KeyboardInput.Press(KeyboardInput.VK_V, KeyboardInput.VK_CONTROL),
         ReplacementStrategy.SetValue => true, // already applied in PrepareAsync
         _ => false,

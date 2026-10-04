@@ -23,6 +23,7 @@ public partial class SuggestionPopup : Window
     private readonly TaskCompletionSource<PopupChoice> _choice = new();
     private readonly TextIssue _issue;
     private readonly List<Button> _suggestionButtons = new();
+    private bool _wasActivated;
 
     public SuggestionPopup(TextIssue issue)
     {
@@ -57,7 +58,14 @@ public partial class SuggestionPopup : Window
         IgnoreRuleButton.Visibility = issue.Category == IssueCategory.Spelling ? Visibility.Collapsed : Visibility.Visible;
 
         PreviewKeyDown += OnPreviewKeyDown;
-        Deactivated += (_, _) => Complete(new PopupChoice(PopupChoiceKind.Cancel));
+
+        // Losing focus means "clicked away" only if we had it: when Windows refuses the activation
+        // (foreground lock), Deactivated still fires and would close the popup the instant it appears.
+        Activated += (_, _) => _wasActivated = true;
+        Deactivated += (_, _) =>
+        {
+            if (_wasActivated) Complete(new PopupChoice(PopupChoiceKind.Cancel));
+        };
     }
 
     /// <summary>
@@ -71,6 +79,20 @@ public partial class SuggestionPopup : Window
         Place(anchor);
         Activate();
         (_suggestionButtons.FirstOrDefault() ?? (UIElement)AddToDictionaryButton).Focus();
+
+        // Activation can be refused if the user touched another app at the wrong moment; retry once.
+        // If it still fails the popup stays up, and clicking it activates it normally.
+        var retry = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        retry.Tick += (_, _) =>
+        {
+            retry.Stop();
+            if (!IsActive && !_choice.Task.IsCompleted)
+            {
+                Activate();
+                (_suggestionButtons.FirstOrDefault() ?? (UIElement)AddToDictionaryButton).Focus();
+            }
+        };
+        retry.Start();
         return _choice.Task;
     }
 

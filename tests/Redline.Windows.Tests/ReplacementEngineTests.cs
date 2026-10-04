@@ -117,6 +117,18 @@ public sealed class ReplacementEngineTests : IDisposable
     }
 
     [InteractiveFact]
+    public async Task MultiWordReplacement_TypesEveryCharacter()
+    {
+        // Regression: batched Unicode keystrokes after a space arrived as the batch's last character in Notepad.
+        var (adapter, snapshot) = await PrepareAsync("I have alot of work.");
+
+        var result = await Engine().ApplyAsync(adapter, IssueAt(snapshot, "alot"), "a lot");
+
+        Assert.True(result.Outcome == CorrectionOutcome.Applied, result.ToString());
+        Assert.Equal("I have a lot of work.", await BoxText());
+    }
+
+    [InteractiveFact]
     public async Task Deletion_RemovesWordAndOneSpace()
     {
         var (adapter, snapshot) = await PrepareAsync("I saw the the cat.");

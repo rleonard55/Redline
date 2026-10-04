@@ -114,6 +114,63 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
         return result ?? Array.Empty<TextBounds>();
     }
 
+    public async Task<IReadOnlyList<IReadOnlyList<TextBounds>>> GetBoundsAsync(
+        IReadOnlyList<TextRange> ranges, string documentText, CancellationToken ct = default)
+    {
+        var result = await InvokeOrNull<IReadOnlyList<IReadOnlyList<TextBounds>>>(() =>
+        {
+            if (_text is null) return null;
+            var all = new List<IReadOnlyList<TextBounds>>(ranges.Count);
+            foreach (var range in ranges)
+                all.Add(VerifiedBounds(_text, range, documentText));
+            return all;
+        }, ct).ConfigureAwait(false);
+
+        return result ?? ranges.Select(_ => (IReadOnlyList<TextBounds>)Array.Empty<TextBounds>()).ToList();
+    }
+
+    /// <summary>UIA thread only. Rectangles for the first unit mapping whose text matches; else none.</summary>
+    private static IReadOnlyList<TextBounds> VerifiedBounds(TextPattern text, TextRange range, string documentText)
+    {
+        if (range.Start < 0 || range.Length <= 0 || range.End > documentText.Length)
+            return Array.Empty<TextBounds>();
+
+        var expected = documentText.Substring(range.Start, range.Length);
+        foreach (var candidate in CorrectionMath.ProviderUnitCandidates(documentText, range))
+        {
+            var r = CreateRange(text, candidate);
+            if (r is null || r.GetText(-1) != expected)
+                continue;
+            return r.GetBoundingRectangles()
+                .Select(rect => new TextBounds(rect.X, rect.Y, rect.Width, rect.Height))
+                .Where(b => !b.IsEmpty)
+                .ToList();
+        }
+        return Array.Empty<TextBounds>();
+    }
+
+    public Task<TextBounds?> GetSurfaceBoundsAsync(CancellationToken ct = default) => InvokeOrNull<TextBounds?>(() =>
+    {
+        var r = _element.Current.BoundingRectangle;
+        if (r.IsEmpty || r.Width <= 0 || r.Height <= 0) return null;
+
+        // Clip to the top-level window so a control larger than its scroll viewport (or partly
+        // outside the window) doesn't extend the overlay past what's actually on screen.
+        double left = r.Left, top = r.Top, right = r.Right, bottom = r.Bottom;
+        var root = TopLevelWindow();
+        if (root != IntPtr.Zero && GetWindowRect(root, out var w))
+        {
+            left = Math.Max(left, w.Left);
+            top = Math.Max(top, w.Top);
+            right = Math.Min(right, w.Right);
+            bottom = Math.Min(bottom, w.Bottom);
+        }
+        return right - left < 1 || bottom - top < 1 ? null : new TextBounds(left, top, right - left, bottom - top);
+    }, ct);
+
+    public async Task<long> GetTopLevelWindowAsync(CancellationToken ct = default) =>
+        await InvokeOrNull<long?>(() => TopLevelWindow().ToInt64(), ct).ConfigureAwait(false) ?? 0;
+
     public async Task<bool> HasKeyboardFocusAsync(CancellationToken ct = default) =>
         await InvokeOrNull<bool?>(() =>
         {
@@ -165,6 +222,10 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
     private IntPtr _topLevelWindow;
 
     private const uint GA_ROOT = 2;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);

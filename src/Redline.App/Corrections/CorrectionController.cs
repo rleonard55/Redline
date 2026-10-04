@@ -114,7 +114,9 @@ public sealed class CorrectionController
 
     private async Task ShowAndApplyAsync(ITextSurfaceAdapter adapter, TextIssue issue)
     {
-        var bounds = await adapter.GetBoundsAsync(issue.Range);
+        // Verified geometry (the range must read as the flagged text), same as the squiggles.
+        var text = _document.Current?.Text ?? string.Empty;
+        var bounds = (await adapter.GetBoundsAsync([issue.Range], text))[0];
         var choice = await new SuggestionPopup(issue).ShowNear(bounds.Count > 0 ? bounds[0] : null);
         // Action + category only: rule ids and messages can quote the user's words.
         _logger.LogInformation("Popup choice {Choice} for {Category} issue from {Analyzer}", choice.Kind, issue.Category, issue.Analyzer);

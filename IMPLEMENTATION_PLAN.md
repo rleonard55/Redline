@@ -882,6 +882,8 @@ graph TD
 └──────────────────┘
 ```
 
+> **As built:** one overlay per *focused text field* (sized to its visible rectangle, which clips scrolled-out text for free) rather than one per monitor. It is click-through and non-activating, and sits directly above the target window in the normal z-order instead of topmost, so anything covering the target — other apps, the target's own menus — covers the squiggles too. It is deliberately *not* an owned window of the target: cross-process ownership attaches input queues, so a hung target could hang Redline. Squiggles render in physical pixels (geometry straight from UIA) with a per-monitor DPI transform. Geometry is verified per issue (the range must read as the flagged text) and skipped when it doesn't. Window move/resize uses a per-process WinEvent hook; scrolling is caught by a 400 ms refresh. Activation is Option B (hotkey, default Ctrl+Alt+.).
+
 **Key challenge:** The overlay must track the target window's position frame-by-frame without flicker. Strategies:
 
 1. **WinEventHook** for `EVENT_OBJECT_LOCATIONCHANGE` on target window → reposition overlay

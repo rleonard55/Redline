@@ -21,6 +21,19 @@ public interface ITextSurfaceAdapter : IDisposable
     /// <summary>Screen rectangles (physical pixels) covering <paramref name="range"/>; empty if unavailable.</summary>
     Task<IReadOnlyList<TextBounds>> GetBoundsAsync(TextRange range, CancellationToken ct = default);
 
+    /// <summary>
+    /// Screen rectangles (physical pixels) for each of <paramref name="ranges"/> (UTF-16 offsets into
+    /// <paramref name="documentText"/>), in one round trip. A range gets an empty list unless the
+    /// control's text at that position reads exactly as expected — no geometry beats wrong geometry.
+    /// </summary>
+    Task<IReadOnlyList<IReadOnlyList<TextBounds>>> GetBoundsAsync(IReadOnlyList<TextRange> ranges, string documentText, CancellationToken ct = default);
+
+    /// <summary>The control's visible rectangle (physical pixels, clipped to its window), or null.</summary>
+    Task<TextBounds?> GetSurfaceBoundsAsync(CancellationToken ct = default);
+
+    /// <summary>Native handle of the control's top-level window, or 0 if unknown.</summary>
+    Task<long> GetTopLevelWindowAsync(CancellationToken ct = default);
+
     // --- Editing (used by the replacement engine) ---
 
     /// <summary>True if this surface currently holds keyboard focus.</summary>
