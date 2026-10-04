@@ -15,7 +15,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 2 Corrections (engine, popup, ignore/dictionary) | done | 205f0de |
 | 3 Inline squiggle overlay | done | f683e89 |
 | 4 Compatibility hardening | done | 93bb57d, d8e6afb |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done | 4d1ceb4, 57b4473, (part 3 next commit) |
+| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done; part 3 (crash reports, log retention, diagnostics mode, perf counters) done; WiX MSI installer done | 4d1ceb4, 57b4473, 7520968, (installer next commit) |
 | 6 Optional AI | not started | |
 
 ### Phase 5 — part 2 (done), how it fits together
@@ -54,13 +54,28 @@ list of app quirks and how each is handled. Read both before changing behavior.
 - Known flaky: `UiaIntegrationTests.GenericAdapter_ReadsText_Caret_AndGeometry` sometimes fails in
   `AutomationElement.FromHandle` (COMException) — seen 2026-10-03 while the user's Redline was running; passes on re-run.
 
+### Phase 5 — installer (done)
+- `installer/build.ps1 [-SkipHarper] [-Version x.y.z]` → `artifacts/Redline-<ver>-x64.msi` (cargo, self-contained
+  win-x64 publish to `artifacts/publish`, then `installer/Redline.Installer.wixproj`, WiX **6.0.2** — v7 needs the
+  OSMF EULA). Version comes from `Directory.Build.props`. The wixproj is not in Redline.sln.
+- Per-user (no elevation) into `%LOCALAPPDATA%\Programs\Redline`; Start-menu shortcut; launches Redline after install
+  (`LAUNCHAPP=0` to skip). User data in `%LOCALAPPDATA%\Redline` is kept on uninstall.
+- Start with Windows: the MSI owns HKCU Run `Redline` (`STARTWITHWINDOWS=0` to skip); on upgrade it's re-added only
+  if present before (RegistrySearch + SetProperty). **The Run key is the truth**: at startup the app syncs
+  `General.StartWithWindows` from it and never rewrites it; only toggling the setting writes or removes it.
+- Closing a running instance: `Redline.exe --exit` sets the `Local\Redline.App.Exit` event, waits 10 s, then kills.
+  The MSI runs it before InstallValidate on uninstall/upgrade. Don't use util:CloseApplication: WM_CLOSE only closes
+  the hidden WPF windows and it's sequenced after RemoveFiles — the uninstall hung for minutes.
+- Icon: `src/Redline.App/Redline.ico` from `installer/make-icon.ps1` (tray design; DIB frames + 256 px PNG).
+- Verified 2026-10-03 on the user's machine: install, upgrade 0.5.0→0.5.1 while running (graceful exit, relaunch),
+  upgrade with startup turned off (stays off), uninstall while running (8 s, everything removed). Not tested: the
+  interactive (non-/qn) install, which has no wizard UI — just the progress dialog.
+
 ### Phase 5 — next steps, in order
 1. Live check of the remaining part-2 items above (needs the user's running instance closed; ask first —
    ending the process from a session may be blocked by auto mode, so ask the user to Exit from the tray).
    Also part 3: Diagnostics tab toggle changes the file level, Timings row fills in, Open logs folder works.
-2. Installer — **WiX MSI** (user decided 2026-10-03; no code-signing cert, so expect SmartScreen). Must ship
-   `harper_ffi.dll`. Installer should turn on start-with-Windows.
-3. Auto-update — **needs the user's decision** on hosting (e.g. GitHub Releases).
+2. Auto-update — **needs the user's decision** on hosting (e.g. GitHub Releases).
 
 Deferred (documented in docs/compatibility.md): VS Code editor support (needs a VS Code extension);
 multi-monitor / non-100% DPI is implemented but untested (user has one 100% monitor).

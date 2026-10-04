@@ -9,6 +9,9 @@
     <RootNamespace>Redline.App</RootNamespace>
     <AssemblyName>Redline</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Redline.ico</ApplicationIcon>
+    <!-- English-only UI: don't publish the framework's localized resource folders. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!-- WFO0003 wants WinForms' SetHighDpiMode; this is a WPF app, where PerMonitorV2 belongs in the manifest. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>

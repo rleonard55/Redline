@@ -1,0 +1,12 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <!-- Built by installer/build.ps1, which publishes the app first. Not part of Redline.sln. -->
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>Redline-$(Version)-x64</OutputName>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish\</PublishDir>
+    <DefineConstants>ProductVersion=$(Version);PublishDir=$(PublishDir);RepoRoot=$(MSBuildThisFileDirectory)..\</DefineConstants>
+    <!-- Per-user install into %LOCALAPPDATA%\Programs: file key paths and profile folders are intended.
+         ICE69: the shortcut and Run value point at Redline.exe from other components of the same feature. -->
+    <SuppressIces>ICE38;ICE64;ICE69;ICE91</SuppressIces>
+  </PropertyGroup>
+</Project>

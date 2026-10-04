@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Product version: the app's file/informational version and the MSI ProductVersion. -->
+    <Version>0.5.0</Version>
+  </PropertyGroup>
+</Project>

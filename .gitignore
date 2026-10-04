@@ -23,3 +23,6 @@ native/harper-ffi/target/
 
 # Runtime crash dumps
 *crash.log
+
+# Build outputs (installer/build.ps1)
+artifacts/

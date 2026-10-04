@@ -25,7 +25,12 @@ namespace Redline.App;
 
 public partial class App : Application
 {
+    private const string SingleInstanceName = @"Local\Redline.App.SingleInstance";
+    private const string ExitEventName = @"Local\Redline.App.Exit";
+
     private Mutex? _singleInstance;
+    private EventWaitHandle? _exitSignal;
+    private RegisteredWaitHandle? _exitWait;
     private ServiceProvider? _services;
     private TrayIconHost? _tray;
     private DiagnosticsWindow? _diagnosticsWindow;
@@ -48,13 +53,27 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        _singleInstance = new Mutex(initiallyOwned: true, @"Local\Redline.App.SingleInstance", out bool createdNew);
+        if (e.Args.Contains("--exit", StringComparer.OrdinalIgnoreCase))
+        {
+            Shutdown(ExitRunningInstance() ? 0 : 1);
+            return;
+        }
+
+        _singleInstance = new Mutex(initiallyOwned: true, SingleInstanceName, out bool createdNew);
         if (!createdNew)
         {
             MessageBox.Show("Redline is already running (see the system tray).", "Redline", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
             return;
         }
+
+        // The installer runs "Redline.exe --exit" before replacing or removing files.
+        _exitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ExitEventName);
+        _exitWait = ThreadPool.RegisterWaitForSingleObject(_exitSignal, (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            _logger?.LogInformation("Exit requested by another process (installer)");
+            Shutdown();
+        }), null, Timeout.Infinite, executeOnlyOnce: true);
 
         var log = _log = new DiagnosticsLog(DiagnosticsLog.DefaultDirectory);
         _services = ConfigureServices(log);
@@ -146,6 +165,7 @@ public partial class App : Application
         if (_hotkeys.RegisterConfigured(configuredHotkey) is { } hotkeyProblem)
             _tray.Notify(hotkeyProblem, _hotkeys.Active is null);
 
+        SyncStartWithWindows(settings);
         ApplySettings(null, settings.Current);
         settings.Changed += (old, updated) => Dispatcher.BeginInvoke(() => ApplySettings(old, updated));
 
@@ -195,8 +215,8 @@ public partial class App : Application
             _tray.Notify($"{hotkey} is used by another app; keeping {_hotkeys.Active?.ToString() ?? "no hotkey"}.", true);
         }
 
-        // At startup only refresh an existing opt-in (the exe may have moved); never remove one unasked.
-        if (old is null ? s.General.StartWithWindows : old.General.StartWithWindows != s.General.StartWithWindows)
+        // Only an actual change writes the Run key; at startup the setting was synced from it instead.
+        if (old is not null && old.General.StartWithWindows != s.General.StartWithWindows)
         {
             try
             {
@@ -273,6 +293,63 @@ public partial class App : Application
         return services.BuildServiceProvider();
     }
 
+    /// <summary>
+    /// <c>Redline.exe --exit</c>: asks the running instance (this session) to quit and waits for it,
+    /// killing it after 10 s. Returns false if one had to be killed.
+    /// </summary>
+    private static bool ExitRunningInstance()
+    {
+        using var self = Process.GetCurrentProcess();
+        var running = Process.GetProcessesByName("Redline").Where(p => p.Id != self.Id && p.SessionId == self.SessionId).ToList();
+        if (running.Count == 0) return true;
+
+        if (EventWaitHandle.TryOpenExisting(ExitEventName, out var signal))
+        {
+            using (signal) signal.Set();
+        }
+
+        bool clean = true;
+        foreach (var process in running)
+        {
+            using (process)
+            {
+                if (process.WaitForExit(10_000)) continue;
+                clean = false;
+                try
+                {
+                    process.Kill();
+                    process.WaitForExit(5_000);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    // Already gone, or not ours to kill.
+                }
+            }
+        }
+        return clean;
+    }
+
+    /// <summary>
+    /// The Run key is the truth for start-with-Windows: the installer writes it and uninstall removes it,
+    /// so the setting mirrors it. Never rewritten at startup — a build-folder copy must not take over the
+    /// installed copy's entry.
+    /// </summary>
+    private void SyncStartWithWindows(SettingsStore settings)
+    {
+        bool registered;
+        try
+        {
+            registered = _services!.GetRequiredService<StartupRegistration>().RegisteredCommand is not null;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or System.IO.IOException)
+        {
+            _logger?.LogWarning("Couldn't read the Run key: {Reason}", ex.Message);
+            return;
+        }
+        if (registered != settings.Current.General.StartWithWindows)
+            settings.Update(st => st with { General = st.General with { StartWithWindows = registered } });
+    }
+
     /// <summary>Timing summary (counts and milliseconds only).</summary>
     private void LogPerfSummary()
     {
@@ -338,6 +415,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _exitWait?.Unregister(null);
+        _exitSignal?.Dispose();
         _perfTimer?.Stop();
         LogPerfSummary();
         _logger?.LogInformation("Redline exiting");

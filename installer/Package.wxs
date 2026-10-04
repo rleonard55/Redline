@@ -1,0 +1,86 @@
+<!--
+  Redline MSI: per-user (no elevation), installs to %LOCALAPPDATA%\Programs\Redline.
+  Properties (msiexec /i Redline.msi NAME=value):
+    STARTWITHWINDOWS  1 (default) registers HKCU Run "Redline"; on upgrade the user's current choice wins.
+    LAUNCHAPP         1 (default) starts Redline when installation finishes.
+  User data (%LOCALAPPDATA%\Redline: settings, dictionary, logs) is left in place on uninstall.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Redline"
+           Manufacturer="Redline"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="28A90438-1D75-4474-8643-69FBD4944DE3"
+           Scope="perUser"
+           Language="1033">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Redline is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="RedlineIcon" SourceFile="$(var.RepoRoot)src\Redline.App\Redline.ico" />
+    <Property Id="ARPPRODUCTICON" Value="RedlineIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <Property Id="STARTWITHWINDOWS" Value="1" Secure="yes" />
+    <Property Id="LAUNCHAPP" Value="1" Secure="yes" />
+
+    <!-- Read before the old version is removed: an upgrade keeps start-with-Windows only if it is on now. -->
+    <Property Id="EXISTINGRUNVALUE" Secure="yes">
+      <RegistrySearch Id="ExistingRunValue" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                      Name="Redline" Type="raw" />
+    </Property>
+    <SetProperty Id="STARTWITHWINDOWS" Value="0" Before="CostFinalize" Sequence="both"
+                 Condition="WIX_UPGRADE_DETECTED AND NOT EXISTINGRUNVALUE" />
+
+    <!--
+      Before files are replaced or removed, ask a running Redline to quit (Redline.exe with the exit switch
+      signals it and waits, killing it after 10 s). WiX's util:CloseApplication can't do this: WM_CLOSE only closes
+      a tray app's hidden windows, and it runs after RemoveFiles on uninstall.
+    -->
+    <CustomAction Id="ExitRunningRedline" Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]Redline.exe&quot; --exit" Return="ignore" Impersonate="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Redline" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Redline">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="RunAtSignIn" />
+    </Feature>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="MainExe">
+        <File Id="RedlineExe" Source="$(var.PublishDir)Redline.exe" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      </Component>
+      <Files Include="$(var.PublishDir)**">
+        <Exclude Files="$(var.PublishDir)Redline.exe" />
+        <Exclude Files="$(var.PublishDir)**\*.pdb" />
+      </Files>
+    </ComponentGroup>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="RedlineShortcut" Name="Redline" Description="System-wide spelling and grammar checking"
+                  Target="[#RedlineExe]" WorkingDirectory="INSTALLFOLDER" Icon="RedlineIcon" />
+        <RegistryValue Root="HKCU" Key="Software\Redline\Installer" Name="StartMenuShortcut" Type="integer" Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- The app shows this as Settings › Start with Windows and may remove it when the user turns that off. -->
+    <Component Id="RunAtSignIn" Directory="INSTALLFOLDER" Condition="STARTWITHWINDOWS = 1">
+      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="Redline" Type="string"
+                     Value="&quot;[#RedlineExe]&quot;" KeyPath="yes" />
+    </Component>
+
+    <CustomAction Id="LaunchRedline" FileRef="RedlineExe" ExeCommand="" Return="asyncNoWait" Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="ExitRunningRedline" Before="InstallValidate" Condition="Installed OR WIX_UPGRADE_DETECTED" />
+      <Custom Action="LaunchRedline" After="InstallFinalize" Condition="LAUNCHAPP = 1 AND NOT Installed AND NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

@@ -46,8 +46,8 @@ public sealed record GeneralSettings
     public const string DefaultHotkey = "Ctrl+Alt+.";
 
     /// <summary>
-    /// Off by default while Redline runs from a build folder (registering a path that moves with
-    /// every rebuild would be wrong); the installer turns it on.
+    /// Mirrors the HKCU Run key (synced from it at startup; the installer writes it). Toggling it
+    /// registers or removes the running exe.
     /// </summary>
     public bool StartWithWindows { get; init; } = false;
 
