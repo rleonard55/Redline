@@ -110,6 +110,10 @@ list of app quirks and how each is handled. Read both before changing behavior.
   Still light-only: the Win32 `MessageBox`es ("already running", startup failure). Tray balloons are drawn by Windows.
 - Verified live 2026-10-04 (dark and light, incl. switching with Settings open; hover e2e passes in both; tray menu
   checked with a scratch harness that builds the real `TrayIconHost`).
+- Diagnostics window: same per-window Fluent theme; the log ListBox gets a dense item style built in code on Loaded
+  (`FindResource(typeof(ListBoxItem))` as BasedOn — Fluent items are ~40 px tall). Checked light + dark with a
+  harness that invokes `App.ConfigureServices` by reflection and captures via `PrintWindow(PW_RENDERFULLCONTENT)`
+  (no activation, works while covered — a SetForegroundWindow capture grabbed VS Code instead).
   `tools/manual-tests/scripts/shot_window.ps1` captures one window (DWM frame bounds, CAPTUREBLT).
 
 ### Phase 6 — AI grammar with GRMR-V3-G1B (done, opt-in)

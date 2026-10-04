@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using Redline.Core.Models;
 
@@ -17,6 +18,17 @@ public partial class DiagnosticsWindow : Window
 #pragma warning restore WPF0001
         InitializeComponent();
         DataContext = viewModel;
+
+        // Fluent list items are ~40 px tall; the log wants dense rows. Built in code because a XAML
+        // BasedOn resolves before the Fluent dictionary is merged (it would fall back to the Aero style).
+        Loaded += (_, _) =>
+        {
+            var dense = new Style(typeof(ListBoxItem), (Style)LogList.FindResource(typeof(ListBoxItem)));
+            dense.Setters.Add(new Setter(MinHeightProperty, 0.0));
+            dense.Setters.Add(new Setter(PaddingProperty, new Thickness(6, 1, 6, 1)));
+            dense.Setters.Add(new Setter(MarginProperty, new Thickness(0)));
+            LogList.ItemContainerStyle = dense;
+        };
 
         // Keep the log scrolled to the newest entry.
         NotifyCollectionChangedEventHandler scroll = (_, _) =>

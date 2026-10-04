@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Threading;
+using Redline.Analysis.Grmr;
 using Redline.App.Logging;
 using Redline.Core.Diagnostics;
 using Redline.Core.Interfaces;
@@ -22,6 +23,8 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
     private const int MaxLogLines = 300;
     private readonly Dispatcher _ui;
     private readonly PerfCounters _perfCounters;
+    private readonly IReadOnlyList<ITextAnalyzer> _analyzers;
+    private string _analyzerStates = string.Empty;
 
     private string _surface = "No surface";
     private string _capabilities = string.Empty;
@@ -43,7 +46,8 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
         _ui = ui;
         _perfCounters = perf;
 
-        Analyzers = string.Join("   ", analyzers.Select(a => $"{a.Name}: {(a.IsAvailable ? "available" : "UNAVAILABLE")}"));
+        _analyzers = analyzers.ToList();
+        RefreshAnalyzers();
 
         foreach (var entry in log.Snapshot())
             Log.Add(entry.ToString());
@@ -85,7 +89,7 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
 
     public ObservableCollection<IssueRow> Issues { get; } = new();
     public ObservableCollection<string> Log { get; } = new();
-    public string Analyzers { get; }
+    public string Analyzers { get => _analyzerStates; private set => Set(ref _analyzerStates, value); }
 
     public string Surface { get => _surface; private set => Set(ref _surface, value); }
     public string Capabilities { get => _capabilities; private set => Set(ref _capabilities, value); }
@@ -96,9 +100,21 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
     /// <summary>Re-reads the timing counters (the window calls this on a timer while open).</summary>
     public void RefreshPerf()
     {
+        RefreshAnalyzers(); // the AI grammar model comes and goes with its setting and download
         var summary = _perfCounters.Summary();
         Perf = summary.Length == 0 ? "No samples yet" : $"p50/p95/max — {summary}";
     }
+
+    private void RefreshAnalyzers() =>
+        Analyzers = string.Join("   ", _analyzers.Select(a => $"{a.Name}: {Describe(a)}"));
+
+    private static string Describe(ITextAnalyzer analyzer) => analyzer switch
+    {
+        GrmrAnalyzer { Enabled: false } => "off",
+        GrmrAnalyzer { Failed: true } => "FAILED TO LOAD",
+        GrmrAnalyzer { IsAvailable: false } => "not downloaded",
+        _ => analyzer.IsAvailable ? "available" : "UNAVAILABLE",
+    };
 
     private void ShowResult(AnalysisResult r)
     {
