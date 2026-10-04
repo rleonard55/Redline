@@ -105,7 +105,11 @@ list of app quirks and how each is handled. Read both before changing behavior.
   `{DynamicResource TextFillColorSecondaryBrush}`.
 - Flyouts: `Annotations/SystemTheme` reads HKCU `...\Themes\Personalize\AppsUseLightTheme`; `FlyoutPalette.Light/Dark`
   (frozen brushes). `SuggestionPopup` sets `Flyout.*` DynamicResources per show; `HoverPill.ApplyPalette` per show.
-- Verified live 2026-10-04 (dark and light, incl. switching with Settings open; hover e2e passes in both).
+- Tray menu (WinForms `ContextMenuStrip`): `TrayIcon/TrayMenuRenderer` (light/dark professional renderer, own
+  tick/separator/hover drawing, DWM rounded corners) applied in the menu's `Opening` from `SystemTheme.IsDark`.
+  Still light-only: the Win32 `MessageBox`es ("already running", startup failure). Tray balloons are drawn by Windows.
+- Verified live 2026-10-04 (dark and light, incl. switching with Settings open; hover e2e passes in both; tray menu
+  checked with a scratch harness that builds the real `TrayIconHost`).
   `tools/manual-tests/scripts/shot_window.ps1` captures one window (DWM frame bounds, CAPTUREBLT).
 
 ### Phase 6 — AI grammar with GRMR-V3-G1B (done, opt-in)

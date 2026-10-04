@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using Redline.Annotations;
 using Forms = System.Windows.Forms;
 
 namespace Redline.App.TrayIcon;
@@ -35,6 +36,13 @@ public sealed class TrayIconHost : IDisposable
         menu.Items.Add(_pauseItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => exit());
+        menu.ShowImageMargin = false;
+        menu.ShowCheckMargin = true; // room for Pause's tick
+        foreach (Forms.ToolStripItem item in menu.Items)
+            if (item is Forms.ToolStripMenuItem) item.Padding = new Forms.Padding(0, 3, 0, 3);
+        // Follow the Windows light/dark app mode, checked each time the menu opens.
+        menu.Opening += (_, _) => TrayMenuRenderer.Apply(menu, SystemTheme.IsDark);
+        menu.Opened += (_, _) => TrayMenuRenderer.RoundCorners(menu);
 
         _icon = new Forms.NotifyIcon
         {
