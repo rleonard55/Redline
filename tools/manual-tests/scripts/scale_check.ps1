@@ -34,6 +34,10 @@ try {
   Start-Sleep -Seconds 1
   # A DPI-virtualized target: this process started before the switch, so Windows bitmap-scales its windows.
   & "$scripts\redline_overlay_shot.ps1" -Out "$env:TEMP\overlay_scaled_virtualized.png" | Select-Object -Last 2
+  Get-Process Redline -ErrorAction SilentlyContinue | Stop-Process
+  Start-Sleep -Seconds 1
+  # Hover pill + apply in a virtualized window (this process's forms are bitmap-scaled too).
+  & "$scripts\redline_hover_e2e.ps1" | Select-Object -First 8
 }
 finally {
   Get-Process Redline -ErrorAction SilentlyContinue | Stop-Process

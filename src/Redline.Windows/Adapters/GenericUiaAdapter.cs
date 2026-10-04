@@ -1,6 +1,7 @@
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
 using Redline.Core.Corrections;
+using Redline.Core.Geometry;
 using Redline.Core.Interfaces;
 using Redline.Core.Models;
 using Redline.Windows.Automation;
@@ -116,8 +117,9 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
             if (r is null) return null;
 
             // Physical screen pixels (Redline is PerMonitorV2-aware).
+            var fix = VirtualizationFix();
             return r.GetBoundingRectangles()
-                .Select(rect => new TextBounds(rect.X, rect.Y, rect.Width, rect.Height))
+                .Select(rect => fix(new TextBounds(rect.X, rect.Y, rect.Width, rect.Height)))
                 .Where(b => !b.IsEmpty)
                 .ToList();
         }, ct).ConfigureAwait(false);
@@ -133,8 +135,9 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
             if (_text is null) return null;
             var all = new List<IReadOnlyList<TextBounds>>(ranges.Count);
             int driftHint = 0; // drift tends to grow monotonically through a document
+            var fix = VirtualizationFix();
             foreach (var range in ranges)
-                all.Add(VerifiedBounds(_text, range, documentText, ref driftHint));
+                all.Add(VerifiedBounds(_text, range, documentText, ref driftHint).Select(fix).ToList());
             return all;
         }, ct).ConfigureAwait(false);
 
@@ -272,6 +275,29 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
             SetForegroundWindow(root);
     }
 
+    /// <summary>
+    /// UIA thread only. The correction for text rectangles of a classic Win32/WinForms control in a window
+    /// Windows bitmap-scales (see <see cref="DpiVirtualization"/>); identity otherwise. Re-evaluated per call:
+    /// the window may have moved to another monitor or the display scale may have changed.
+    /// </summary>
+    private Func<TextBounds, TextBounds> VirtualizationFix()
+    {
+        // Only UIA's client-side Win32 proxies mix physical origins with unscaled offsets; Chromium, WPF,
+        // UWP and Office providers report physical rectangles even in virtualized windows.
+        if (Context.FrameworkId is not ("Win32" or "WinForm") || Context.NativeWindowHandle == 0)
+            return static b => b;
+
+        var hwnd = new IntPtr(Context.NativeWindowHandle);
+        uint windowDpi = GetDpiForWindow(hwnd);
+        uint monitorDpi = GetDpiForMonitor(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), MDT_EFFECTIVE_DPI, out uint dpiX, out _) == 0 ? dpiX : 0;
+        double scale = DpiVirtualization.Scale(windowDpi, monitorDpi);
+        if (scale == 1.0) return static b => b;
+
+        var origin = new POINT();
+        if (!ClientToScreen(hwnd, ref origin)) return static b => b; // physical: we're PerMonitorV2
+        return b => b.IsEmpty ? b : DpiVirtualization.FromClientOrigin(b, origin.X, origin.Y, scale);
+    }
+
     /// <summary>The element's top-level window: nearest ancestor with a native handle, then its root. UIA thread only.</summary>
     private IntPtr TopLevelWindow()
     {
@@ -296,6 +322,15 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+    private const int MDT_EFFECTIVE_DPI = 0;
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+    [System.Runtime.InteropServices.DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
 
 
     public async Task<bool> SelectAsync(TextRange range, string documentText, CancellationToken ct = default)

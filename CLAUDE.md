@@ -157,8 +157,10 @@ list of app quirks and how each is handled. Read both before changing behavior.
 - **Overlay on DPI change:** `OverlayWindow.ShowAt` re-applies its exact rectangle if `WM_DPICHANGED` (sent during
   `SetWindowPos` onto a monitor with another scale) made WPF resize it. Not verifiable here (one monitor).
 - **125% checked live** (`tools/manual-tests/scripts/scale_check.ps1`, one scaling step up, always restores):
-  DPI-aware targets correct; **DPI-virtualized targets wrong** (text rects unscaled; see docs/compatibility.md) —
-  open bug. The scaling API (`SPI_GET/SETLOGICALDPIOVERRIDE`) takes ONE int = steps relative to the *recommended*
+  DPI-aware targets correct. DPI-virtualized targets were wrong (UIA's Win32 proxy: physical client origin +
+  unscaled offsets) — **fixed** in `GenericUiaAdapter.VirtualizationFix` (Win32/WinForm framework + native hwnd,
+  `GetDpiForWindow` != monitor DPI -> `Core/Geometry/DpiVirtualization.FromClientOrigin`); verified at 125%
+  (overlay shot + hover e2e in a virtualized window pass). The scaling API (`SPI_GET/SETLOGICALDPIOVERRIDE`) takes ONE int = steps relative to the *recommended*
   scale (the user's display recommends 150%; 100% = -2). Reading it as a struct once set the display to 150% for
   ~2 min — the script now checks the resulting DPI and restores in `finally`. Ask before running it.
 - **Report a problem** (Settings > Compatibility): `Core/Diagnostics/CompatibilityIssue` builds a pre-filled public
