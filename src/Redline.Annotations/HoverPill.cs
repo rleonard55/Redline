@@ -24,6 +24,10 @@ internal sealed class HoverPill : Window
     private readonly TextBlock _suggestion = new() { FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
     private readonly Border _applyPart;
     private readonly Border _divider;
+    private readonly Border _morePart;
+    private readonly TextBlock _moreText = new() { Text = "⋯", FontWeight = FontWeights.Bold };
+    private readonly Border _frame;
+    private FlyoutPalette? _palette;
     private IntPtr _hwnd;
 
     public HoverPill()
@@ -48,21 +52,20 @@ internal sealed class HoverPill : Window
             Orientation = Orientation.Horizontal,
             Children = { _dot, new Border { Width = 6 }, _suggestion },
         }, new CornerRadius(10, 0, 0, 10), () => ApplyClicked?.Invoke());
-        _divider = new Border { Width = 1, Background = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xE0)), Margin = new Thickness(0, 4, 0, 4) };
-        var morePart = Part(new TextBlock { Text = "⋯", FontWeight = FontWeights.Bold, Foreground = Brushes.DimGray },
-            new CornerRadius(0, 10, 10, 0), () => MoreClicked?.Invoke());
-        morePart.ToolTip = "More options";
+        _divider = new Border { Width = 1, Margin = new Thickness(0, 4, 0, 4) };
+        _morePart = Part(_moreText, new CornerRadius(0, 10, 10, 0), () => MoreClicked?.Invoke());
+        _morePart.ToolTip = "More options";
 
-        Content = new Border
+        _frame = new Border
         {
             Margin = new Thickness(4, 2, 4, 6), // room for the shadow
             CornerRadius = new CornerRadius(10),
-            Background = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0xC8, 0xC8)),
             BorderThickness = new Thickness(1),
             Effect = new DropShadowEffect { BlurRadius = 6, ShadowDepth = 1.5, Opacity = 0.25 },
-            Child = new StackPanel { Orientation = Orientation.Horizontal, Children = { _applyPart, _divider, morePart } },
+            Child = new StackPanel { Orientation = Orientation.Horizontal, Children = { _applyPart, _divider, _morePart } },
         };
+        Content = _frame;
+        ApplyPalette(SystemTheme.Current);
 
         SourceInitialized += (_, _) =>
         {
@@ -92,6 +95,7 @@ internal sealed class HoverPill : Window
     /// <summary>Shows the pill for <paramref name="issue"/> beside <paramref name="word"/> (physical pixels).</summary>
     public void ShowFor(TextIssue issue, TextBounds word, Color color)
     {
+        ApplyPalette(SystemTheme.Current); // follows light/dark changes between shows
         _dot.Fill = new SolidColorBrush(color);
         var top = issue.Suggestions.FirstOrDefault();
         bool canApply = top is not null;
@@ -123,12 +127,24 @@ internal sealed class HoverPill : Window
             ShowWindow(_hwnd, SW_HIDE);
     }
 
+    private void ApplyPalette(FlyoutPalette palette)
+    {
+        if (ReferenceEquals(palette, _palette)) return;
+        _palette = palette;
+        _frame.Background = palette.Background;
+        _frame.BorderBrush = palette.Border;
+        _divider.Background = palette.Divider;
+        _suggestion.Foreground = palette.Text;
+        _moreText.Foreground = palette.SecondaryText;
+        _applyPart.Background = Brushes.Transparent;
+        _morePart.Background = Brushes.Transparent;
+    }
+
     private enum Target { Apply, More }
     private Target _applyTarget;
 
     private Border Part(UIElement content, CornerRadius corners, Action click)
     {
-        var hover = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0));
         var part = new Border
         {
             Padding = new Thickness(10, 3, 10, 4),
@@ -137,7 +153,7 @@ internal sealed class HoverPill : Window
             Cursor = Cursors.Hand,
             Child = content,
         };
-        part.MouseEnter += (_, _) => part.Background = hover;
+        part.MouseEnter += (_, _) => part.Background = _palette?.Hover ?? Brushes.Transparent;
         part.MouseLeave += (_, _) => part.Background = Brushes.Transparent;
         part.MouseLeftButtonUp += (_, e) =>
         {

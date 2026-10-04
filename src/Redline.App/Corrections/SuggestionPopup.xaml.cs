@@ -5,6 +5,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using Redline.Annotations;
 using Redline.Core.Models;
 
 namespace Redline.App.Corrections;
@@ -29,6 +30,7 @@ public partial class SuggestionPopup : Window
     {
         InitializeComponent();
         _issue = issue;
+        ApplyPalette(SystemTheme.Current);
 
         CategoryText.Text = issue.Category.ToString();
         CategoryBadge.Background = new SolidColorBrush(CategoryColor(issue.Category));
@@ -166,6 +168,18 @@ public partial class SuggestionPopup : Window
     {
         if (!_choice.TrySetResult(choice)) return;
         Close();
+    }
+
+    private void ApplyPalette(FlyoutPalette palette)
+    {
+        Resources["Flyout.Background"] = palette.Background;
+        Resources["Flyout.Border"] = palette.Border;
+        Resources["Flyout.Divider"] = palette.Divider;
+        Resources["Flyout.Text"] = palette.Text;
+        Resources["Flyout.SecondaryText"] = palette.SecondaryText;
+        Resources["Flyout.MutedText"] = palette.MutedText;
+        Resources["Flyout.Hover"] = palette.Hover;
+        Resources["Flyout.KeyboardFocus"] = palette.KeyboardFocus;
     }
 
     private static Color CategoryColor(IssueCategory category) => category switch

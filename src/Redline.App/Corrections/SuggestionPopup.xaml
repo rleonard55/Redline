@@ -4,10 +4,12 @@
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         SizeToContent="WidthAndHeight" ShowInTaskbar="False" Topmost="True"
         Left="-10000" Top="-10000"
-        FontFamily="Segoe UI" FontSize="13" UseLayoutRounding="True">
+        FontFamily="Segoe UI" FontSize="13" UseLayoutRounding="True"
+        Foreground="{DynamicResource Flyout.Text}">
     <Window.Resources>
         <Style x:Key="ItemButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource Flyout.Text}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="HorizontalContentAlignment" Value="Left" />
             <Setter Property="Padding" Value="10,5" />
@@ -20,10 +22,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#14000000" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Flyout.Hover}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#1F0067C0" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Flyout.KeyboardFocus}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -32,7 +34,7 @@
         </Style>
     </Window.Resources>
 
-    <Border Margin="8" Background="White" BorderBrush="#1F000000" BorderThickness="1" CornerRadius="8" MinWidth="240" MaxWidth="420">
+    <Border Margin="8" Background="{DynamicResource Flyout.Background}" BorderBrush="{DynamicResource Flyout.Border}" BorderThickness="1" CornerRadius="8" MinWidth="240" MaxWidth="420">
         <Border.Effect>
             <DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.25" />
         </Border.Effect>
@@ -42,23 +44,23 @@
                     <TextBlock x:Name="CategoryText" Foreground="White" FontSize="11" FontWeight="SemiBold" />
                 </Border>
                 <TextBlock x:Name="OriginalText" Margin="8,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
-                           TextDecorations="Strikethrough" Foreground="#A0000000" TextTrimming="CharacterEllipsis" MaxWidth="300" />
+                           TextDecorations="Strikethrough" Foreground="{DynamicResource Flyout.SecondaryText}" TextTrimming="CharacterEllipsis" MaxWidth="300" />
             </StackPanel>
-            <TextBlock x:Name="MessageText" Margin="10,2,10,6" TextWrapping="Wrap" Foreground="#C0000000" />
+            <TextBlock x:Name="MessageText" Margin="10,2,10,6" TextWrapping="Wrap" Foreground="{DynamicResource Flyout.SecondaryText}" />
 
             <StackPanel x:Name="SuggestionList" />
-            <TextBlock x:Name="NoSuggestions" Margin="10,2,10,4" Foreground="#80000000" FontStyle="Italic"
+            <TextBlock x:Name="NoSuggestions" Margin="10,2,10,4" Foreground="{DynamicResource Flyout.MutedText}" FontStyle="Italic"
                        Text="No suggestions" Visibility="Collapsed" />
 
-            <Separator Margin="6,4" />
+            <Separator Margin="6,4" Background="{DynamicResource Flyout.Divider}" />
             <Button x:Name="AddToDictionaryButton" Style="{StaticResource ItemButton}" Click="AddToDictionary_Click">
-                <TextBlock><Run Text="Add to dictionary" /><Run Text="   D" Foreground="#80000000" /></TextBlock>
+                <TextBlock><Run Text="Add to dictionary" /><Run Text="   D" Foreground="{DynamicResource Flyout.MutedText}" /></TextBlock>
             </Button>
             <Button Style="{StaticResource ItemButton}" Click="Ignore_Click">
-                <TextBlock><Run Text="Ignore" /><Run Text="   I" Foreground="#80000000" /></TextBlock>
+                <TextBlock><Run Text="Ignore" /><Run Text="   I" Foreground="{DynamicResource Flyout.MutedText}" /></TextBlock>
             </Button>
             <Button x:Name="IgnoreRuleButton" Style="{StaticResource ItemButton}" Click="IgnoreRule_Click">
-                <TextBlock><Run Text="Ignore this rule everywhere" /><Run Text="   R" Foreground="#80000000" /></TextBlock>
+                <TextBlock><Run Text="Ignore this rule everywhere" /><Run Text="   R" Foreground="{DynamicResource Flyout.MutedText}" /></TextBlock>
             </Button>
         </StackPanel>
     </Border>

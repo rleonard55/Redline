@@ -12,6 +12,9 @@ public partial class DiagnosticsWindow : Window
     public DiagnosticsWindow(DiagnosticsViewModel viewModel, Action<TextIssue> fixIssue)
     {
         _fixIssue = fixIssue;
+#pragma warning disable WPF0001 // Fluent theme is experimental in .NET 9; System = follow Windows light/dark.
+        ThemeMode = ThemeMode.System;
+#pragma warning restore WPF0001
         InitializeComponent();
         DataContext = viewModel;
 

@@ -43,6 +43,9 @@ public partial class SettingsWindow : Window
         _languages = languages;
         _activeLanguage = activeLanguage;
         _builtInExclusions = builtInExclusions;
+#pragma warning disable WPF0001 // Fluent theme is experimental in .NET 9; System = follow Windows light/dark.
+        ThemeMode = ThemeMode.System;
+#pragma warning restore WPF0001
         InitializeComponent();
 
         LanguageBox.ItemsSource = languages;
