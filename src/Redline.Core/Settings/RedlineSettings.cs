@@ -61,6 +61,9 @@ public sealed record GeneralSettings
     public int AnalysisDelayMs { get; init; } = 300;
 
     public string Hotkey { get; init; } = DefaultHotkey;
+
+    /// <summary>Show a small quick-fix pill when the mouse pointer rests on an underline.</summary>
+    public bool HoverSuggestions { get; init; } = true;
 }
 
 public sealed record WritingSettings

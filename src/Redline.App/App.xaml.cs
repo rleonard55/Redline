@@ -7,10 +7,12 @@ using Redline.Annotations;
 using Redline.App.Corrections;
 using Redline.App.Diagnostics;
 using Redline.App.Logging;
+using Redline.App.Settings;
 using Redline.App.TrayIcon;
 using Redline.Core.Corrections;
 using Redline.Core.Interfaces;
 using Redline.Core.Pipeline;
+using Redline.Core.Settings;
 using Redline.Windows;
 using Redline.Windows.Automation;
 using Redline.Windows.Corrections;
@@ -23,7 +25,8 @@ public partial class App : Application
     private ServiceProvider? _services;
     private TrayIconHost? _tray;
     private DiagnosticsWindow? _diagnosticsWindow;
-    private GlobalHotkey? _hotkey;
+    private SettingsWindow? _settingsWindow;
+    private HotkeyManager? _hotkeys;
 
     /// <summary>The suggestion hotkey actually registered, for UI hints.</summary>
     public static string? HotkeyName { get; private set; }
@@ -92,39 +95,33 @@ public partial class App : Application
         foreach (var analyzer in pipeline.Analyzers)
             _logger.LogInformation("Analyzer {Name}: {State}", analyzer.Name, analyzer.IsAvailable ? "available" : "unavailable");
 
-        _tray = new TrayIconHost(ShowDiagnostics, tracker.SetPaused, Shutdown);
+        var settings = _services.GetRequiredService<SettingsStore>();
+        _tray = new TrayIconHost(
+            ShowSettings, ShowDiagnostics,
+            () => settings.Update(st => st with { General = st.General with { Enabled = !st.General.Enabled } }),
+            Shutdown);
 
         var corrections = _services.GetRequiredService<CorrectionController>();
         corrections.Notify += (message, isError) => _tray.Notify(message, isError);
-        // Ctrl+Alt+. echoes the familiar Ctrl+. "quick fix" without shadowing it in VS Code/Office.
-        // Global hotkeys are first-come: fall back if another app owns ours (Phase 5 makes this configurable).
-        (string Name, uint Modifiers, uint Key)[] hotkeys =
-        [
-            ("Ctrl+Alt+.", GlobalHotkey.MOD_CONTROL | GlobalHotkey.MOD_ALT, 0xBE /* VK_OEM_PERIOD */),
-            ("Win+Alt+Space", GlobalHotkey.MOD_WIN | GlobalHotkey.MOD_ALT, 0x20 /* VK_SPACE */),
-            ("Ctrl+Alt+;", GlobalHotkey.MOD_CONTROL | GlobalHotkey.MOD_ALT, 0xBA /* VK_OEM_1 */),
-        ];
-        foreach (var (name, modifiers, key) in hotkeys)
-        {
-            try
-            {
-                _hotkey = new GlobalHotkey(modifiers, key, () => _ = corrections.ShowForCaretAsync());
-                HotkeyName = name;
-                _logger.LogInformation("Suggestion hotkey: {Hotkey}", name);
-                if (name != hotkeys[0].Name)
-                    _tray.Notify($"{hotkeys[0].Name} is used by another app; Redline's suggestion hotkey is {name}.");
-                break;
-            }
-            catch (InvalidOperationException)
-            {
-                _logger.LogInformation("Hotkey {Hotkey} is owned by another application", name);
-            }
-        }
-        if (_hotkey is null)
-            _tray.Notify("No suggestion hotkey is available; double-click issues in the Diagnostics window instead.", true);
-        _tray.SetHotkeyHint(HotkeyName);
 
-        _services.GetRequiredService<OverlayManager>().Start();
+        // Ctrl+Alt+. (the default) echoes the familiar Ctrl+. "quick fix" without shadowing it in VS Code/Office.
+        _hotkeys = new HotkeyManager(() => _ = corrections.ShowForCaretAsync(), _logger);
+        _hotkeys.ActiveChanged += active =>
+        {
+            HotkeyName = active?.ToString();
+            _tray.SetHotkeyHint(HotkeyName);
+        };
+        Hotkey.TryParse(settings.Current.General.Hotkey, out var configuredHotkey); // Validated() guarantees it parses
+        if (_hotkeys.RegisterConfigured(configuredHotkey) is { } hotkeyProblem)
+            _tray.Notify(hotkeyProblem, _hotkeys.Active is null);
+
+        ApplySettings(null, settings.Current);
+        settings.Changed += (old, updated) => Dispatcher.BeginInvoke(() => ApplySettings(old, updated));
+
+        var overlay = _services.GetRequiredService<OverlayManager>();
+        overlay.ApplyRequested += issue => _ = corrections.ApplyFirstSuggestionAsync(issue);
+        overlay.MoreRequested += issue => _ = corrections.ShowForIssueAsync(issue);
+        overlay.Start();
 
         try
         {
@@ -141,9 +138,48 @@ public partial class App : Application
             ShowDiagnostics();
     }
 
+    /// <summary>Applies settings at startup (<paramref name="old"/> null) and after each change. UI thread.</summary>
+    private void ApplySettings(RedlineSettings? old, RedlineSettings s)
+    {
+        if (_services is null || _tray is null || _hotkeys is null) return;
+
+        // Resuming schedules a focus evaluation, which must not happen before the tracker has started.
+        if (old is null ? !s.General.Enabled : old.General.Enabled != s.General.Enabled)
+            _services.GetRequiredService<SurfaceTracker>().SetPaused(!s.General.Enabled);
+        _tray.SetPaused(!s.General.Enabled);
+        _services.GetRequiredService<IssueCacheManager>().SetWriting(s.Writing);
+        _services.GetRequiredService<AnalysisPipeline>().Debounce = TimeSpan.FromMilliseconds(s.General.AnalysisDelayMs);
+        _services.GetRequiredService<SecurityFilter>().SetUserExclusions(s.Applications.Excluded);
+        _services.GetRequiredService<OverlayManager>().HoverEnabled = s.General.HoverSuggestions;
+
+        // The settings window registers a new hotkey before saving it; this covers hand edits of settings.json.
+        if (old is not null && old.General.Hotkey != s.General.Hotkey
+            && Hotkey.TryParse(s.General.Hotkey, out var hotkey) && !_hotkeys.TryChangeHotkey(hotkey))
+        {
+            _tray.Notify($"{hotkey} is used by another app; keeping {_hotkeys.Active?.ToString() ?? "no hotkey"}.", true);
+        }
+
+        // At startup only refresh an existing opt-in (the exe may have moved); never remove one unasked.
+        if (old is null ? s.General.StartWithWindows : old.General.StartWithWindows != s.General.StartWithWindows)
+        {
+            try
+            {
+                _services.GetRequiredService<StartupRegistration>().Apply(s.General.StartWithWindows, Environment.ProcessPath!);
+                _logger?.LogInformation("Start with Windows: {Enabled}", s.General.StartWithWindows);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or System.IO.IOException)
+            {
+                _logger?.LogWarning("Couldn't update the Run key: {Reason}", ex.Message);
+                _tray.Notify("Couldn't change the start-with-Windows setting.", true);
+            }
+        }
+    }
+
     private static ServiceProvider ConfigureServices(DiagnosticsLog log)
     {
         var services = new ServiceCollection();
+        services.AddSingleton(sp => new SettingsStore(SettingsStore.DefaultPath, sp.GetRequiredService<ILogger<SettingsStore>>()));
+        services.AddSingleton(_ => new StartupRegistration());
 
         services.AddSingleton(log);
         services.AddLogging(b => b.ClearProviders().AddProvider(log).SetMinimumLevel(LogLevel.Debug));
@@ -163,9 +199,12 @@ public partial class App : Application
         services.AddSingleton(_ => new IgnoreList(IgnoreList.DefaultPath));
         services.AddSingleton(sp => new IssueCacheManager(sp.GetRequiredService<IPersonalDictionary>(), sp.GetRequiredService<IgnoreList>()));
         services.AddSingleton<ITextAnalyzer>(sp => new SpellAnalyzer(
-            sp.GetRequiredService<IPersonalDictionary>(), "en-US", sp.GetRequiredService<ILogger<SpellAnalyzer>>()));
+            sp.GetRequiredService<IPersonalDictionary>(), sp.GetRequiredService<SettingsStore>().Current.General.Language, sp.GetRequiredService<ILogger<SpellAnalyzer>>()));
         services.AddSingleton<ITextAnalyzer>(sp => new HarperAnalyzer(sp.GetRequiredService<ILogger<HarperAnalyzer>>()));
-        services.AddSingleton(_ => new AnalysisPipelineOptions());
+        services.AddSingleton(sp => new AnalysisPipelineOptions
+        {
+            Debounce = TimeSpan.FromMilliseconds(sp.GetRequiredService<SettingsStore>().Current.General.AnalysisDelayMs),
+        });
         services.AddSingleton(sp => new AnalysisPipeline(
             sp.GetServices<ITextAnalyzer>(),
             sp.GetRequiredService<AnalysisPipelineOptions>(),
@@ -196,6 +235,27 @@ public partial class App : Application
         return services.BuildServiceProvider();
     }
 
+    private void ShowSettings()
+    {
+        if (_services is null || _hotkeys is null) return;
+
+        if (_settingsWindow is null)
+        {
+            var spelling = _services.GetServices<ITextAnalyzer>().OfType<SpellAnalyzer>().FirstOrDefault();
+            _settingsWindow = new SettingsWindow(
+                _services.GetRequiredService<SettingsStore>(), _hotkeys,
+                _services.GetRequiredService<IPersonalDictionary>(), _services.GetRequiredService<IgnoreList>(),
+                SpellAnalyzer.SupportedLanguages(), spelling?.LanguageTag,
+                _services.GetRequiredService<SecurityFilter>().BuiltInExclusions);
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+            _settingsWindow.Show();
+        }
+        else
+        {
+            _settingsWindow.Activate();
+        }
+    }
+
     private void ShowDiagnostics()
     {
         if (_services is null) return;
@@ -218,7 +278,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _logger?.LogInformation("Redline exiting");
-        _hotkey?.Dispose();
+        _hotkeys?.Dispose();
         _tray?.Dispose();
 
         // Order matters: stop event sources before the UIA thread they marshal onto.

@@ -23,6 +23,9 @@ they were written in; update them before use.
 - `redline_popup_e2e.ps1` — the full user flow in a throwaway WinForms window: hotkey → popup → fix,
   delete repeated word, ignore. Every keystroke is guarded by a foreground check. Run after any change
   to focus, overlay, popup or engine code. `_nontop` variant uses a non-topmost window.
+- `redline_hover_e2e.ps1` — hover quick-fix pill: hover → pill → click suggestion (form must stay in front),
+  hover → "⋯" → popup → Ignore. Moves the mouse pointer; clicks are guarded by WindowFromPoint on the pill.
+  Note: the test form is TopMost, so squiggles aren't drawn over it (overlay stays out of the topmost band); hover still works.
 - `redline_teams_chat_e2e.ps1` — same flow in the Teams chat box (never sends).
 - `redline_overlay_*.ps1` — overlay screenshots: static, typing/move/scroll, scroll mid/settled.
 - `redline_grace_wpf.ps1` — focus-bounce grace period vs immediate sensitive detach.

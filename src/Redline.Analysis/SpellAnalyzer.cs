@@ -37,6 +37,24 @@ public sealed class SpellAnalyzer : ITextAnalyzer
     public bool IsAvailable => _checker is not null;
     public string? LanguageTag { get; private set; }
 
+    /// <summary>Language tags with an installed Windows spelling dictionary; empty if the API is unavailable.</summary>
+    public static IReadOnlyList<string> SupportedLanguages() => Task.Run(() =>
+    {
+        var languages = new List<string>();
+        try
+        {
+            var factory = (ISpellCheckerFactory)new SpellCheckerFactoryClass();
+            IEnumString tags = factory.SupportedLanguages;
+            var buffer = new string[1];
+            while (tags.Next(1, buffer, IntPtr.Zero) == S_OK)
+                languages.Add(buffer[0]);
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidCastException)
+        {
+        }
+        return (IReadOnlyList<string>)languages;
+    }).GetAwaiter().GetResult();
+
     private ISpellChecker? CreateChecker(string language)
     {
         try

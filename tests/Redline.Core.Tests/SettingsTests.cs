@@ -56,6 +56,7 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.True(store.Current.Writing.Spelling);
         Assert.False(store.Current.Writing.StyleSuggestions);
         Assert.Equal("Ctrl+Alt+.", store.Current.General.Hotkey);
+        Assert.True(store.Current.General.HoverSuggestions);
         Assert.Contains("\"analysisDelayMs\": 300", File.ReadAllText(FilePath));
     }
 
@@ -130,6 +131,7 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.True(c.Writing.Spelling);
         Assert.Equal(GeneralSettings.MaxDelayMs, c.General.AnalysisDelayMs);
         Assert.Equal("Ctrl+Alt+.", c.General.Hotkey);
+        Assert.True(c.General.HoverSuggestions); // settings added later default on in older files
     }
 
     public void Dispose()

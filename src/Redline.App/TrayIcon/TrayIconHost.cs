@@ -13,20 +13,17 @@ public sealed class TrayIconHost : IDisposable
     private readonly Icon _activeIcon;
     private readonly Icon _pausedIcon;
 
-    public TrayIconHost(Action showDiagnostics, Action<bool> setPaused, Action exit)
+    /// <param name="togglePause">Asked to flip the paused state; the app answers via <see cref="SetPaused"/>.</param>
+    public TrayIconHost(Action showSettings, Action showDiagnostics, Action togglePause, Action exit)
     {
         _activeIcon = CreateIcon(Color.FromArgb(0xD1, 0x24, 0x24));
         _pausedIcon = CreateIcon(Color.Gray);
 
-        _pauseItem = new Forms.ToolStripMenuItem("Pause") { CheckOnClick = true };
-        _pauseItem.CheckedChanged += (_, _) =>
-        {
-            setPaused(_pauseItem.Checked);
-            _icon!.Icon = _pauseItem.Checked ? _pausedIcon : _activeIcon;
-            _icon.Text = _pauseItem.Checked ? "Redline (paused)" : _activeText;
-        };
+        _pauseItem = new Forms.ToolStripMenuItem("Pause");
+        _pauseItem.Click += (_, _) => togglePause();
 
         var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add("Settings…", null, (_, _) => showSettings());
         menu.Items.Add("Diagnostics", null, (_, _) => showDiagnostics());
         menu.Items.Add(_pauseItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -67,6 +64,14 @@ public sealed class TrayIconHost : IDisposable
         {
             DestroyIcon(hIcon);
         }
+    }
+
+    /// <summary>Reflects the paused state (from settings) in the menu check and the icon.</summary>
+    public void SetPaused(bool paused)
+    {
+        _pauseItem.Checked = paused;
+        _icon.Icon = paused ? _pausedIcon : _activeIcon;
+        _icon.Text = paused ? "Redline (paused)" : _activeText;
     }
 
     /// <summary>Shows the suggestion hotkey in the tray tooltip (max 63 chars).</summary>

@@ -41,6 +41,7 @@ public sealed class OverlayManager : IDisposable
     private readonly DispatcherTimer _settle;
     private readonly DispatcherTimer _anchorTimer;
     private readonly int _ownProcessId = Environment.ProcessId;
+    private readonly HoverController _hover;
 
     // UI thread only.
     private OverlayWindow? _window;
@@ -66,6 +67,9 @@ public sealed class OverlayManager : IDisposable
         _cache = cache;
         _windowEvents = windowEvents;
         _logger = logger ?? NullLogger<OverlayManager>.Instance;
+        _hover = new HoverController(ui);
+        _hover.ApplyRequested += issue => ApplyRequested?.Invoke(issue);
+        _hover.MoreRequested += issue => MoreRequested?.Invoke(issue);
 
         // Note: the DispatcherTimer constructor overload that takes a callback also *starts* the timer,
         // so these use the (priority, dispatcher) overload and are started explicitly in Start().
@@ -82,6 +86,19 @@ public sealed class OverlayManager : IDisposable
         };
     }
 
+    /// <summary>The hover pill's suggestion was clicked: apply the issue's first suggestion. Raised on the UI thread.</summary>
+    public event Action<TextIssue>? ApplyRequested;
+
+    /// <summary>The hover pill's "⋯" was clicked: show the full suggestion popup. Raised on the UI thread.</summary>
+    public event Action<TextIssue>? MoreRequested;
+
+    /// <summary>Show the quick-fix pill when the pointer rests on a squiggle. UI thread.</summary>
+    public bool HoverEnabled
+    {
+        get => _hover.Enabled;
+        set => _hover.Enabled = value;
+    }
+
     /// <summary>Call on the UI thread.</summary>
     public void Start()
     {
@@ -96,6 +113,7 @@ public sealed class OverlayManager : IDisposable
     private async void OnSurfaceChanged(SurfaceChangedEventArgs e)
     {
         Hide();
+        _hover.Clear(disarm: true);
         _scrolling = false;
         _issues = null;
         _adapter = e.Surface is null ? null : _tracker.CurrentAdapter;
@@ -127,6 +145,7 @@ public sealed class OverlayManager : IDisposable
     {
         if (_adapter?.Context.SurfaceId != e.Surface.SurfaceId || _issues is null) return;
         _anchor = null; // its offsets refer to the old text
+        _hover.Clear(disarm: true); // typing: the pill waits for the pointer to move again
 
         // Shift squiggles to follow the edit right away instead of blanking them all until the
         // re-analysis lands. Anything touching the edit is dropped: that word is being changed.
@@ -257,7 +276,17 @@ public sealed class OverlayManager : IDisposable
             return;
         }
 
-        var spans = OverlayLayout.Layout(surface.Value, drawn.Select((issue, i) => (issue.Category, bounds[i])));
+        // Per issue, so each visible squiggle remembers its issue for hover hit-testing (screen pixels).
+        var spans = new List<SquiggleSpan>();
+        var regions = new List<(TextIssue, TextBounds)>();
+        for (int i = 0; i < drawn.Count; i++)
+        {
+            foreach (var span in OverlayLayout.Layout(surface.Value, [(drawn[i].Category, bounds[i])]))
+            {
+                spans.Add(span);
+                regions.Add((drawn[i], span.Rect with { X = span.Rect.X + surface.Value.Left, Y = span.Rect.Y + surface.Value.Top }));
+            }
+        }
         if (spans.Count == 0)
         {
             Hide();
@@ -266,6 +295,7 @@ public sealed class OverlayManager : IDisposable
 
         _window ??= new OverlayWindow();
         _window.ShowAt(surface.Value, spans, _root);
+        _hover.SetRegions(_root, regions);
 
         int anchorIndex = bounds.ToList().FindIndex(b => b.Count > 0);
         _anchor = anchorIndex >= 0 ? (drawn[anchorIndex].Range, bounds[anchorIndex][0]) : null;
@@ -309,6 +339,7 @@ public sealed class OverlayManager : IDisposable
                 {
                     _scrolling = true;
                     _window?.HideOverlay();
+                    _hover.Clear(disarm: false);
                 }
             }
             else if (_scrolling)
@@ -339,6 +370,7 @@ public sealed class OverlayManager : IDisposable
     private void Hide()
     {
         _window?.HideOverlay();
+        _hover.Clear(disarm: false);
         _lastSpanCount = -1;
     }
 
@@ -347,6 +379,7 @@ public sealed class OverlayManager : IDisposable
         _refresh.Stop();
         _settle.Stop();
         _anchorTimer.Stop();
+        _hover.Dispose();
         _window?.Close();
     }
 

@@ -86,7 +86,7 @@ public sealed class CorrectionController
         }
     }
 
-    /// <summary>Diagnostics window: a specific issue on the current surface.</summary>
+    /// <summary>Diagnostics window or the hover pill's "⋯": a specific issue on the current surface.</summary>
     public async Task ShowForIssueAsync(TextIssue issue)
     {
         if (_busy) return;
@@ -105,6 +105,38 @@ public sealed class CorrectionController
         {
             _logger.LogError(ex, "Correction flow failed");
             Notify?.Invoke("Something went wrong showing suggestions.", true);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// Hover pill: apply <paramref name="issue"/>'s first suggestion straight away. The pill never takes
+    /// focus, so the target is still in front; the engine verifies everything before it types.
+    /// </summary>
+    public async Task ApplyFirstSuggestionAsync(TextIssue issue)
+    {
+        if (_busy || issue.Suggestions.Count == 0) return;
+        _busy = true;
+        try
+        {
+            var adapter = _tracker.CurrentAdapter;
+            if (adapter is null || _document.Current?.Version != issue.SnapshotVersion)
+            {
+                Notify?.Invoke("That issue is out of date — the text or focus changed.", false);
+                return;
+            }
+            _logger.LogInformation("Pill apply for {Category} issue from {Analyzer}", issue.Category, issue.Analyzer);
+            var result = await _engine.ApplyAsync(adapter, issue, issue.Suggestions[0]);
+            if (!result.Succeeded)
+                Notify?.Invoke(result.Message, result.Outcome == CorrectionOutcome.Unverified);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Correction flow failed");
+            Notify?.Invoke("Something went wrong applying the suggestion.", true);
         }
         finally
         {

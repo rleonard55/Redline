@@ -21,6 +21,10 @@ internal sealed class SquiggleLayer : FrameworkElement
         [IssueCategory.Other] = Frozen(Color.FromRgb(0x70, 0x70, 0x70)),
     };
 
+    /// <summary>The squiggle colour for <paramref name="category"/> (the hover pill's dot matches it).</summary>
+    public static Color ColorFor(IssueCategory category) =>
+        ((SolidColorBrush)Brushes.GetValueOrDefault(category, Brushes[IssueCategory.Other])).Color;
+
     private IReadOnlyList<SquiggleSpan> _spans = Array.Empty<SquiggleSpan>();
     private double _scale = 1.0;
 

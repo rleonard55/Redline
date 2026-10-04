@@ -61,6 +61,18 @@ public class SpellAnalyzerTests
     }
 
     [Fact]
+    public void SupportedLanguages_IncludesEnglish() =>
+        Assert.Contains("en-US", SpellAnalyzer.SupportedLanguages(), StringComparer.OrdinalIgnoreCase);
+
+    [Fact]
+    public void UninstalledLanguage_FallsBackToEnglish()
+    {
+        var analyzer = new SpellAnalyzer(new PersonalDictionary(null), "xx-XX");
+        Assert.True(analyzer.IsAvailable);
+        Assert.Equal("en-US", analyzer.LanguageTag);
+    }
+
+    [Fact]
     public async Task FlagsMisspelling_WithSuggestionsAndCorrectOffsets()
     {
         var analyzer = new SpellAnalyzer(new PersonalDictionary(null));

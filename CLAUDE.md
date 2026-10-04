@@ -15,31 +15,39 @@ list of app quirks and how each is handled. Read both before changing behavior.
 | 2 Corrections (engine, popup, ignore/dictionary) | done | 205f0de |
 | 3 Inline squiggle overlay | done | f683e89 |
 | 4 Compatibility hardening | done | 93bb57d, d8e6afb |
-| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done | 4d1ceb4 |
+| 5 Product hardening | **in progress** — part 1 (settings model/store/runtime hooks) done; part 2 (settings wired in, hotkey from settings, Run key, Settings window) done | 4d1ceb4, (part 2 next commit) |
 | 6 Optional AI | not started | |
 
+### Phase 5 — part 2 (done), how it fits together
+- `App.ApplySettings(old, new)` applies everything at startup (`old` null) and on `SettingsStore.Changed`
+  (marshalled to the UI thread). Tray Pause flips `General.Enabled`; the tray only *reflects* state (`SetPaused`).
+  At startup it doesn't call `tracker.SetPaused(false)` (resume would schedule focus evaluation before Start).
+- `HotkeyManager`: configured hotkey, falls back to Win+Alt+Space / Ctrl+Alt+; only if taken (tray notice).
+  `TryChangeHotkey` registers the new one before releasing the old. The settings window calls it *before* saving.
+  `Suspended` mutes presses while the capture box has focus.
+- `StartupRegistration` (Redline.Windows): Run key value `Redline` = quoted exe path; tests use a throwaway
+  `HKCU\Software\Redline.Tests\Run-<guid>`. At startup only an existing opt-in is refreshed; changes apply both ways.
+- `SettingsWindow` (tray "Settings…"): saves on every change. Language shows "applies after restart".
+- **Hover quick fix** (`Annotations/HoverController` + `HoverPill`, geometry in `Core/Geometry/HoverLayout`):
+  resting the pointer on a squiggle for 300 ms shows a pill under the word: [● top suggestion | ⋯].
+  Suggestion → `CorrectionController.ApplyFirstSuggestionAsync` (engine-verified); ⋯ → the full popup.
+  The cursor is polled (50 ms, only while squiggles are shown) against the rectangles the overlay already
+  measured, so there are no extra UIA queries and the overlay stays click-through. It arms only after the
+  pointer moves (typing disarms it), not while mouse buttons are down, and only if the pointer is over the
+  target (WindowFromPoint) and the target is in front. Setting: `General.HoverSuggestions` (default on).
+- Hover pill verified live with `tools/manual-tests/scripts/redline_hover_e2e.ps1` (apply keeps the form in front,
+  no re-pop without moving, ⋯ popup takes focus, Ignore hands focus back). Not yet verified live: tray Pause
+  round-trip, hotkey capture with real key presses, Start-with-Windows toggle (the Settings window itself was
+  smoke-tested via a scratch WPF harness).
+
 ### Phase 5 — next steps, in order
-1. **Wire settings into the app** (`src/Redline.App/App.xaml.cs`): register `SettingsStore`
-   (`SettingsStore.DefaultPath`) in DI; on start and on `Changed` apply:
-   `tracker.SetPaused(!General.Enabled)` (and make the tray Pause item update `Enabled`),
-   `cache.SetWriting(Writing)`, `pipeline.Debounce = AnalysisDelayMs`,
-   `security.SetUserExclusions(Applications.Excluded)`, hotkey (below), Run key (below).
-   `General.Language` is passed to `SpellAnalyzer` at startup only (show "applies after restart").
-2. **Hotkey from settings**: replace the hard-coded list in `App.xaml.cs` with `Hotkey.TryParse(General.Hotkey)`;
-   keep fallbacks (Win+Alt+Space, Ctrl+Alt+;) only if the configured one is taken, and tell the user.
-   Re-register on change via a `TryChangeHotkey(Hotkey)` method the settings UI calls *before* saving.
-3. **Start with Windows**: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `Redline` =
-   quoted exe path. Default is OFF (`StartWithWindows=false`) until an installer exists — don't
-   register a bin\Debug path at login. Make it testable against a throwaway HKCU key.
-4. **Settings window** (WPF, tray "Settings…"): tabs General (enabled, language, delay, hotkey
-   capture box, start with Windows), Writing (spelling/grammar/style), Apps (user exclusions
-   add/remove; built-in list `SecurityFilter.BuiltInExclusions` shown read-only), Dictionary
-   (personal dictionary words with Remove; `IgnoreList.IgnoredRules` with Restore).
-5. Crash handling + log retention (7 days / 50 MB, never user text), diagnostics-mode toggle,
+1. Live check of the remaining part-2 items above (needs the user's running instance closed; ask first —
+   ending the process from a session may be blocked by auto mode, so ask the user to Exit from the tray).
+2. Crash handling + log retention (7 days / 50 MB, never user text), diagnostics-mode toggle,
    perf counters.
-6. Installer — **needs the user's decision**: MSIX (needs code-signing cert) vs WiX MSI. Must ship
+3. Installer — **WiX MSI** (user decided 2026-10-03; no code-signing cert, so expect SmartScreen). Must ship
    `harper_ffi.dll`. Installer should turn on start-with-Windows.
-7. Auto-update — **needs the user's decision** on hosting (e.g. GitHub Releases).
+4. Auto-update — **needs the user's decision** on hosting (e.g. GitHub Releases).
 
 Deferred (documented in docs/compatibility.md): VS Code editor support (needs a VS Code extension);
 multi-monitor / non-100% DPI is implemented but untested (user has one 100% monitor).
@@ -51,11 +59,12 @@ multi-monitor / non-100% DPI is implemented but untested (user has one 100% moni
 - `src/Redline.Windows` — `UiaDispatcher` (STA), `FocusMonitor`, `ForegroundWindowMonitor`,
   `WindowEventMonitor`, `SurfaceTracker`, `SecurityFilter`, `AdapterSelector`,
   `Adapters/GenericUiaAdapter`, `Corrections/ReplacementEngine`, `Input/KeyboardInput`,
-  `Input/ClipboardScope`.
+  `Input/ClipboardScope`, `StartupRegistration`.
 - `src/Redline.Analysis` — `SpellAnalyzer` (COM `ISpellCheckerFactory`; KD-2 revised), `PersonalDictionary`.
 - `src/Redline.Analysis.Harper` + `native/harper-ffi` — Harper grammar via Rust cdylib (harper-core =2.11.0).
 - `src/Redline.Annotations` — `OverlayWindow`, `SquiggleLayer`, `OverlayManager`.
-- `src/Redline.App` — WPF tray host, DI, diagnostics window, `SuggestionPopup`, `CorrectionController`, `GlobalHotkey`.
+- `src/Redline.App` — WPF tray host, DI, diagnostics window, `Settings/SettingsWindow`, `SuggestionPopup`,
+  `CorrectionController`, `GlobalHotkey`, `HotkeyManager`.
 - `tools/Redline.CompatibilityHarness` — Phase 0 harness. `tools/manual-tests` — real-app probes and scripts (see its README).
 
 ## Build & test
@@ -73,6 +82,8 @@ multi-monitor / non-100% DPI is implemented but untested (user has one 100% moni
   target's *exact top-level window* is foreground, and the selection reads as the flagged text
   (`CorrectionMath.SelectionMatches`: only CRLF/LF and zero-width chars tolerated, contiguous ranges).
   After editing, verify; undo if the result differs (only trailing blanks at document end are forgiven).
+- The hover pill must never activate (WS_EX_NOACTIVATE + MA_NOACTIVATE): clicking it has to leave the target
+  in front with its caret, or the engine's foreground check fails (and the user's focus jumps).
 - Selection before typing; typed characters are sent **one SendInput call per char, 10 ms apart**
   (Notepad corrupts batched Unicode input after a space).
 - Clipboard fallback only when the clipboard is empty/plain text; restore it unless someone else changed it.
