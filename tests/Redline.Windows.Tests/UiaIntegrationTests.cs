@@ -51,7 +51,7 @@ public sealed class UiaIntegrationTests : IDisposable
     }
 
     private Task<AutomationElement> FindAsync(ControlType type) => _uia.InvokeAsync(() =>
-        AutomationElement.FromHandle(_hwnd).FindFirst(TreeScope.Descendants,
+        UiaTestHelpers.FromHandle(_hwnd).FindFirst(TreeScope.Descendants,
             new PropertyCondition(AutomationElement.ControlTypeProperty, type)));
 
     [Fact]
@@ -79,7 +79,7 @@ public sealed class UiaIntegrationTests : IDisposable
         Assert.True(single.Width > 10 && single.Height > 10, $"Unexpected bounds {single}");
 
         // The word's rectangle must lie inside the window's on-screen rectangle.
-        var window = await _uia.InvokeAsync(() => AutomationElement.FromHandle(_hwnd).Current.BoundingRectangle);
+        var window = await _uia.InvokeAsync(() => UiaTestHelpers.FromHandle(_hwnd).Current.BoundingRectangle);
         Assert.True(window.Contains(new Point(single.X + 1, single.Y + 1)), $"{single} not within {window}");
     }
 
@@ -107,7 +107,7 @@ public sealed class UiaIntegrationTests : IDisposable
     public async Task PasswordBox_IsBlockedBySecurityFilter()
     {
         var element = await _uia.InvokeAsync(() =>
-            AutomationElement.FromHandle(_hwnd).FindFirst(TreeScope.Descendants,
+            UiaTestHelpers.FromHandle(_hwnd).FindFirst(TreeScope.Descendants,
                 new PropertyCondition(AutomationElement.IsPasswordProperty, true)));
         var info = await _uia.InvokeAsync(() => ElementInfo.Capture(element));
 

@@ -51,7 +51,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
   `analysis` + `analysis.<analyzer>` (App), `overlay` (OverlayManager layout), `correction` (ReplacementEngine).
   Shown live in the Diagnostics window ("Timings"); summary logged every 5 min in diagnostics mode and at exit.
 - Settings window has a Diagnostics tab (toggle + Open logs folder).
-- Known flaky: `UiaIntegrationTests.GenericAdapter_ReadsText_Caret_AndGeometry` sometimes fails in
+- Was flaky (now retried via `UiaTestHelpers.FromHandle`, also hit on CI): `UiaIntegrationTests.GenericAdapter_ReadsText_Caret_AndGeometry` sometimes failed in
   `AutomationElement.FromHandle` (COMException) — seen 2026-10-03 while the user's Redline was running; passes on re-run.
 
 ### Phase 5 — installer (done)

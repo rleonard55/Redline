@@ -76,7 +76,7 @@ public sealed class ReplacementEngineTests : IDisposable
         await _wpf.InvokeAsync(() => _textBox.Focus());
 
         var hwnd = await _wpf.InvokeAsync(() => new WindowInteropHelper(_window).Handle);
-        var element = await _uia.InvokeAsync(() => AutomationElement.FromHandle(hwnd).FindFirst(TreeScope.Descendants,
+        var element = await _uia.InvokeAsync(() => UiaTestHelpers.FromHandle(hwnd).FindFirst(TreeScope.Descendants,
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)));
         var info = await _uia.InvokeAsync(() => ElementInfo.Capture(element));
         var adapter = await _uia.InvokeAsync(() => (ITextSurfaceAdapter)new GenericUiaAdapter(_uia, element, info));
@@ -218,7 +218,7 @@ public sealed class ReplacementEngineTests : IDisposable
     {
         await _wpf.InvokeAsync(() => _textBox.Text = "One\r\ntwo three");
         var hwnd = await _wpf.InvokeAsync(() => new WindowInteropHelper(_window).Handle);
-        var element = await _uia.InvokeAsync(() => AutomationElement.FromHandle(hwnd).FindFirst(TreeScope.Descendants,
+        var element = await _uia.InvokeAsync(() => UiaTestHelpers.FromHandle(hwnd).FindFirst(TreeScope.Descendants,
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)));
         var info = await _uia.InvokeAsync(() => ElementInfo.Capture(element));
         using var adapter = await _uia.InvokeAsync(() => new GenericUiaAdapter(_uia, element, info));
