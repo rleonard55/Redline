@@ -254,16 +254,23 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
 
     public Task FocusAsync(CancellationToken ct = default) => InvokeOrNull<object?>(() =>
     {
-        // SetFocus first, then make sure the top-level window is foreground: for Chromium content
-        // SetFocus only moves focus within the page, and can leave the page's child window
-        // (Chrome_RenderWidgetHostHWND) as the foreground window, where keystrokes don't reach the
-        // page. Works when Redline is foreground (popup/diagnostics/hotkey).
+        FocusCore();
+        return null;
+    }, ct);
+
+    /// <summary>
+    /// UIA thread only. SetFocus first, then make sure the top-level window is foreground: for
+    /// Chromium content SetFocus only moves focus within the page, and can leave the page's child
+    /// window (Chrome_RenderWidgetHostHWND) as the foreground window, where keystrokes don't reach
+    /// the page. Works when Redline is foreground (popup/diagnostics/hotkey).
+    /// </summary>
+    private void FocusCore()
+    {
         _element.SetFocus();
         var root = TopLevelWindow();
         if (root != IntPtr.Zero && GetForegroundWindow() != root)
             SetForegroundWindow(root);
-        return null;
-    }, ct);
+    }
 
     /// <summary>The element's top-level window: nearest ancestor with a native handle, then its root. UIA thread only.</summary>
     private IntPtr TopLevelWindow()
@@ -296,34 +303,70 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
         if (_text is null || range.Start < 0 || range.End > documentText.Length) return false;
         var expected = documentText.Substring(range.Start, range.Length);
 
-        // Locate the exact range first (see FindRange); only then touch the user's selection.
-        bool selected = await InvokeOrNull<bool?>(() =>
-        {
-            int driftHint = 0;
-            var r = FindRange(_text, documentText, range, ref driftHint);
-            if (r is null) return false;
-            r.Select();
-            return true;
-        }, ct).ConfigureAwait(false) ?? false;
-        if (!selected) return false;
+        // Locate the exact range first (see FindRange); only then touch focus and the selection.
+        if (!await SelectRangeAsync(range, documentText, ct).ConfigureAwait(false))
+            return false;
 
         // Chromium applies Select() asynchronously (the renderer process handles it), so the
-        // selection can read stale for a moment. Poll until it reads exactly as expected.
+        // selection can read stale for a moment. Poll until it reads as expected; if it still hasn't
+        // after a while, select once more (rich editors sometimes drop the first request).
         var deadline = DateTime.UtcNow + SelectionSettleTimeout;
+        var reselectAt = DateTime.UtcNow + ReselectAfter;
+        bool reselected = false;
+
         while (true)
         {
-            bool matches = await InvokeOrNull<bool?>(() =>
-            {
-                var selection = _text.GetSelection();
-                return selection is { Length: 1 } && selection[0].GetText(-1) == expected;
-            }, ct).ConfigureAwait(false) ?? false;
+            bool matches = await InvokeOrNull<bool?>(() => SelectionReadsAs(_text, expected), ct).ConfigureAwait(false) ?? false;
             if (matches) return true;
             if (DateTime.UtcNow >= deadline) return false;
+
+            if (!reselected && DateTime.UtcNow >= reselectAt)
+            {
+                reselected = true;
+                await SelectRangeAsync(range, documentText, ct).ConfigureAwait(false);
+            }
+
             await Task.Delay(25, ct).ConfigureAwait(false);
         }
     }
 
-    private static readonly TimeSpan SelectionSettleTimeout = TimeSpan.FromMilliseconds(500);
+    /// <summary>Focuses the surface and selects the verified range. False if the range can't be located.</summary>
+    private async Task<bool> SelectRangeAsync(TextRange range, string documentText, CancellationToken ct) =>
+        await InvokeOrNull<bool?>(() =>
+        {
+            int driftHint = 0;
+            var r = FindRange(_text!, documentText, range, ref driftHint);
+            if (r is null) return false;
+            try { FocusCore(); } catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException) { }
+            r.Select();
+            return true;
+        }, ct).ConfigureAwait(false) ?? false;
+
+    /// <summary>
+    /// UIA thread only. True if the current selection is exactly <paramref name="expected"/>, allowing
+    /// only for differences that can't change what typing over it does (see
+    /// <see cref="CorrectionMath.SelectionMatches"/>). Rich editors (CKEditor, TinyMCE) may report one
+    /// visual selection as several ranges split at formatting tags; those must be contiguous.
+    /// </summary>
+    private static bool SelectionReadsAs(TextPattern text, string expected)
+    {
+        var selection = text.GetSelection();
+        if (selection is null || selection.Length == 0) return false;
+
+        if (selection.Length == 1)
+            return CorrectionMath.SelectionMatches(selection[0].GetText(-1), expected);
+
+        for (int i = 1; i < selection.Length; i++)
+        {
+            if (selection[i - 1].CompareEndpoints(TextPatternRangeEndpoint.End, selection[i], TextPatternRangeEndpoint.Start) != 0)
+                return false; // disjoint ranges: typing would replace text elsewhere too
+        }
+        return CorrectionMath.SelectionMatches(string.Concat(selection.Select(r => r.GetText(-1))), expected);
+    }
+
+    private static readonly TimeSpan ReselectAfter = TimeSpan.FromMilliseconds(300);
+
+    private static readonly TimeSpan SelectionSettleTimeout = TimeSpan.FromMilliseconds(1200);
 
     public async Task<bool> SetValueAsync(string expectedCurrent, string newValue, CancellationToken ct = default) =>
         await InvokeOrNull<bool?>(() =>

@@ -45,8 +45,8 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
 
         log.EntryAdded += entry => Post(() =>
         {
+            while (Log.Count >= MaxLogLines) Log.RemoveAt(0);
             Log.Add(entry.ToString());
-            while (Log.Count > MaxLogLines) Log.RemoveAt(0);
         });
 
         tracker.SurfaceChanged += (_, e) => Post(() =>

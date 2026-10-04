@@ -106,6 +106,33 @@ public static class CorrectionMath
         return s[..end];
     }
 
+    /// <summary>
+    /// True if a control's selected text <paramref name="actual"/> is the flagged text
+    /// <paramref name="expected"/>, so typing over the selection replaces exactly that. Tolerates only
+    /// CRLF vs LF and zero-width characters (U+200B, U+FEFF, U+2060), which rich editors insert at
+    /// formatting boundaries and which have no visible extent. Visible differences — spaces,
+    /// non-breaking spaces, line breaks, any other character — never match.
+    /// </summary>
+    public static bool SelectionMatches(string? actual, string expected)
+    {
+        if (actual is null) return false;
+        if (actual == expected) return true;
+        return Normalize(actual) == Normalize(expected);
+
+        static string Normalize(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c is (char)0x200B or (char)0xFEFF or (char)0x2060) continue;
+                if (c == (char)0x0D && i + 1 < s.Length && s[i + 1] == (char)0x0A) continue; // CRLF -> LF
+                sb.Append(c);
+            }
+            return sb.ToString();
+        }
+    }
+
     /// <summary>U+FFFC, which UIA text uses for embedded objects such as images.</summary>
     private const char ObjectReplacement = (char)0xFFFC;
 

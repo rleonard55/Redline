@@ -18,8 +18,11 @@ public partial class DiagnosticsWindow : Window
         // Keep the log scrolled to the newest entry.
         NotifyCollectionChangedEventHandler scroll = (_, _) =>
         {
-            if (LogList.Items.Count > 0)
-                LogList.ScrollIntoView(LogList.Items[^1]);
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () =>
+            {
+                if (LogList.Items.Count > 0)
+                    LogList.ScrollIntoView(LogList.Items[^1]);
+            });
         };
         viewModel.Log.CollectionChanged += scroll;
         Closed += (_, _) => viewModel.Log.CollectionChanged -= scroll;

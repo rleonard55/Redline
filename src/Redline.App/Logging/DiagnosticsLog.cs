@@ -81,7 +81,12 @@ public sealed class DiagnosticsLog : ILoggerProvider
             var message = formatter(state, exception);
             // Type + message keeps lines readable; no stack traces until Phase 5's structured crash logging.
             if (exception is not null)
-                message += $" [{exception.GetType().Name}: {exception.Message}]";
+            {
+                var exMsg = exception.InnerException is not null
+                    ? $"{exception.GetType().Name}: {exception.Message} -> {exception.InnerException.GetType().Name}: {exception.InnerException.Message}"
+                    : $"{exception.GetType().Name}: {exception.Message}";
+                message += $" [{exMsg}]";
+            }
             log.Write(logLevel, category, message);
         }
     }

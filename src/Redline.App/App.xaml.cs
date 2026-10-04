@@ -45,8 +45,25 @@ public partial class App : Application
         _services = ConfigureServices(log);
         _logger = _services.GetRequiredService<ILogger<App>>();
 
+        int unhandledCount = 0;
+        DateTimeOffset lastUnhandled = DateTimeOffset.MinValue;
         DispatcherUnhandledException += (_, args) =>
         {
+            var now = DateTimeOffset.Now;
+            if ((now - lastUnhandled).TotalSeconds < 1)
+            {
+                if (++unhandledCount > 5)
+                {
+                    args.Handled = true;
+                    return;
+                }
+            }
+            else
+            {
+                unhandledCount = 1;
+                lastUnhandled = now;
+            }
+
             _logger.LogError(args.Exception, "Unhandled UI exception");
             args.Handled = true;
         };

@@ -48,7 +48,7 @@ public partial class SuggestionPopup : Window
             var button = new Button { Content = label, Style = (Style)FindResource("ItemButton") };
             button.Click += (_, _) => Complete(new PopupChoice(PopupChoiceKind.Suggestion, replacement));
             _suggestionButtons.Add(button);
-            SuggestionList.Items.Add(button);
+            SuggestionList.Children.Add(button);
             number++;
         }
 
@@ -75,7 +75,14 @@ public partial class SuggestionPopup : Window
     public Task<PopupChoice> ShowNear(TextBounds? anchor)
     {
         Show(); // starts off-screen (Left/Top = -10000) so we can measure before placing
-        UpdateLayout();
+        try
+        {
+            UpdateLayout();
+        }
+        catch (InvalidOperationException)
+        {
+            // Defensive: if an external window on the dispatcher has a transient layout conflict, don't abort
+        }
         Place(anchor);
         Activate();
         (_suggestionButtons.FirstOrDefault() ?? (UIElement)AddToDictionaryButton).Focus();
@@ -100,8 +107,8 @@ public partial class SuggestionPopup : Window
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         var dpi = VisualTreeHelper.GetDpi(this);
-        int width = (int)Math.Ceiling(ActualWidth * dpi.DpiScaleX);
-        int height = (int)Math.Ceiling(ActualHeight * dpi.DpiScaleY);
+        int width = (int)Math.Ceiling((ActualWidth > 0 ? ActualWidth : MinWidth) * dpi.DpiScaleX);
+        int height = (int)Math.Ceiling((ActualHeight > 0 ? ActualHeight : 100) * dpi.DpiScaleY);
         int margin = (int)(8 * dpi.DpiScaleX); // the Border's shadow margin
 
         int x, y, anchorTop;

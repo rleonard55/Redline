@@ -46,7 +46,7 @@
             </StackPanel>
             <TextBlock x:Name="MessageText" Margin="10,2,10,6" TextWrapping="Wrap" Foreground="#C0000000" />
 
-            <ItemsControl x:Name="SuggestionList" Focusable="False" />
+            <StackPanel x:Name="SuggestionList" />
             <TextBlock x:Name="NoSuggestions" Margin="10,2,10,4" Foreground="#80000000" FontStyle="Italic"
                        Text="No suggestions" Visibility="Collapsed" />
 

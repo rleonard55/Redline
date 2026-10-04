@@ -42,6 +42,7 @@
 
         <DataGrid Grid.Row="1" x:Name="IssueGrid" ItemsSource="{Binding Issues}" AutoGenerateColumns="False" IsReadOnly="True"
                   HeadersVisibility="Column" GridLinesVisibility="Horizontal" CanUserAddRows="False"
+                  EnableRowVirtualization="False" EnableColumnVirtualization="False"
                   SelectionMode="Single" MouseDoubleClick="IssueGrid_MouseDoubleClick"
                   ToolTip="Double-click an issue to fix it (or use the suggestion hotkey in the app)">
             <DataGrid.Columns>
@@ -57,6 +58,7 @@
         <TextBlock Grid.Row="2" Margin="0,10,0,4" FontWeight="SemiBold"
                    Text="Log (never contains document text)" />
         <ListBox Grid.Row="3" ItemsSource="{Binding Log}" FontFamily="Consolas" FontSize="11"
+                 VirtualizingPanel.IsVirtualizing="False" ScrollViewer.CanContentScroll="False"
                  x:Name="LogList" />
     </Grid>
 </Window>

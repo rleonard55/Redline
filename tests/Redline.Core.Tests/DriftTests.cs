@@ -47,6 +47,24 @@ public class DriftTests
         Assert.Equal(equivalent, CorrectionMath.EquivalentForVerification(actual, expected));
     }
 
+    [Theory]
+    [InlineData("an", "an", true)]
+    [InlineData("a\u200Bn", "an", true)]           // zero-width space at a formatting boundary
+    [InlineData("\uFEFFan", "an", true)]           // zero-width no-break space
+    [InlineData("line\r\nnext", "line\nnext", true)]
+    [InlineData(" an", "an", false)]                // a real space must not be swallowed
+    [InlineData("an ", "an", false)]
+    [InlineData("\u00A0an", "an", false)]          // non-breaking space is visible
+    [InlineData("an\n", "an", false)]              // so is a line break
+    [InlineData("and", "an", false)]
+    [InlineData(null, "an", false)]
+    public void SelectionMatches_ToleratesOnlyInvisibleDifferences(string? actual, string expected, bool matches)
+    {
+        Assert.Equal(matches, CorrectionMath.SelectionMatches(Unescape(actual), Unescape(expected)!));
+    }
+
+    private static string? Unescape(string? s) => s is null ? null : System.Text.RegularExpressions.Regex.Unescape(s);
+
     [Fact]
     public void ContextAround_DistinguishesRepeatedWords()
     {
