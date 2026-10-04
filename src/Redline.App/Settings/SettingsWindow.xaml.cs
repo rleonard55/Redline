@@ -343,10 +343,11 @@ public partial class SettingsWindow : Window
         ModelStatus.Text = _modelNote ?? state switch
         {
             ModelState.Downloading => $"Downloading{(char)0x2026} {_models.Progress:P0} of {_models.Size / 1_000_000} MB",
-            ModelState.Installed => $"Installed in {_models.Directory}",
+            ModelState.Installed => $"Installed ({_models.Size / 1_000_000} MB).",
             ModelState.Failed => _models.Error ?? "The download failed.",
             _ => "Not downloaded yet.",
         };
+        ModelStatus.ToolTip = state == ModelState.Installed ? _models.ModelPath : null;
         _modelNote = null;
     }
 

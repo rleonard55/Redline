@@ -21,6 +21,7 @@ public static class M {
   [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
   [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr d, int x, int y, int w, int h, IntPtr s, int sx, int sy, uint op);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   public static uint ForegroundPid() { uint p; GetWindowThreadProcessId(GetForegroundWindow(), out p); return p; }
@@ -38,6 +39,8 @@ public static class M {
   public static bool Over(IntPtr h, int x, int y) { var p = new POINT { X = x, Y = y }; return WindowFromPoint(p) == h; }
 }
 "@
+# Physical pixels for SetCursorPos/BitBlt, like the overlay (otherwise squiggles can be missing from shots).
+[void][M]::SetProcessDPIAware()
 $model = Join-Path $env:LOCALAPPDATA "Redline\models\GRMR-V3-G1B-Q4_K_M.gguf"
 $settings = Get-Content (Join-Path $env:LOCALAPPDATA "Redline\settings.json") -Raw | ConvertFrom-Json
 if (-not (Test-Path $model)) { "SKIPPED: model not downloaded"; return }
@@ -48,7 +51,8 @@ $redline = Start-Process -FilePath "$PSScriptRoot\..\..\..\src\Redline.App\bin\D
 Start-Sleep -Seconds 3
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Redline GRMR e2e"; $form.Width = 620; $form.Height = 200; $form.TopMost = $true
+$form.Text = "Redline GRMR e2e"; $form.Width = 620; $form.Height = 200
+# Not TopMost: the overlay sits just above its target in the normal z-order, so a topmost target hides the underlines.
 $form.StartPosition = "Manual"; $form.Left = 200; $form.Top = 200
 $tb = New-Object System.Windows.Forms.TextBox
 $tb.Multiline = $true; $tb.Dock = "Fill"; $tb.Font = New-Object System.Drawing.Font("Segoe UI", 14)

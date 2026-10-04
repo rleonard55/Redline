@@ -87,8 +87,8 @@
                     <TextBlock x:Name="ModelStatus" Style="{StaticResource Hint}" Margin="0,6,0,0" />
                     <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0">
                         <Run Text="Model:" />
-                        <Hyperlink Click="ModelPage_Click">GRMR-V3-G1B</Hyperlink><Run Text=" (Apache-2.0), fine-tuned from Gemma 3 1B and subject to the" />
-                        <Hyperlink Click="GemmaTerms_Click">Gemma Terms of Use</Hyperlink><Run Text="." />
+                        <Hyperlink Click="ModelPage_Click" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}">GRMR-V3-G1B</Hyperlink><Run Text=" (Apache-2.0), fine-tuned from Gemma 3 1B and subject to the" />
+                        <Hyperlink Click="GemmaTerms_Click" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}">Gemma Terms of Use</Hyperlink><Run Text="." />
                     </TextBlock>
                 </StackPanel>
                 </ScrollViewer>
