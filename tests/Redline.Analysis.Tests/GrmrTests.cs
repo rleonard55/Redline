@@ -285,11 +285,75 @@ public sealed class GrmrModelStoreTests : IDisposable
     }
 }
 
+public sealed class GpuGuardTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), $"redline-gpu-{Guid.NewGuid():N}");
+
+    [Fact]
+    public void CrashDuringTrial_BlocksTheGpuNextTime_UntilReset()
+    {
+        var first = new GpuGuard(_dir);
+        Assert.False(first.Blocked);
+        first.BeginTrial();
+        // The process dies here: no EndTrial, no Dispose.
+
+        var second = new GpuGuard(_dir);
+        Assert.True(second.CrashedLastTime);
+        Assert.True(second.Blocked);
+
+        var third = new GpuGuard(_dir);
+        Assert.False(third.CrashedLastTime); // reported once
+        Assert.True(third.Blocked);          // but still blocked
+
+        third.Reset();
+        Assert.False(third.Blocked);
+        Assert.False(new GpuGuard(_dir).Blocked);
+    }
+
+    [Fact]
+    public void SuccessfulTrial_OrCleanExit_LeavesTheGpuOn()
+    {
+        var guard = new GpuGuard(_dir);
+        guard.BeginTrial();
+        guard.EndTrial();
+        Assert.True(guard.TrialPassed);
+        Assert.False(new GpuGuard(_dir).Blocked);
+
+        var exiting = new GpuGuard(_dir);
+        exiting.BeginTrial();
+        exiting.Dispose(); // Redline closed while the model was loading
+        var next = new GpuGuard(_dir);
+        Assert.False(next.CrashedLastTime);
+        Assert.False(next.Blocked);
+    }
+
+    [Fact]
+    public void AfterTheGpuWorked_LaterLoadsSkipTheMarker()
+    {
+        var guard = new GpuGuard(_dir);
+        guard.BeginTrial();
+        guard.EndTrial();
+        guard.BeginTrial(); // model reloaded after idle unload
+        Assert.False(File.Exists(Path.Combine(_dir, GpuGuard.TrialFile)));
+    }
+
+    [Theory]
+    [InlineData("llama_model_load_from_file_impl: using device Vulkan0 (Intel(R) Iris(R) Xe Graphics) - 8053 MiB free", "Intel(R) Iris(R) Xe Graphics")]
+    [InlineData("llama_model_load_from_file_impl: using device Vulkan0 (NVIDIA GeForce RTX 4070) - 11800 MiB free", "NVIDIA GeForce RTX 4070")]
+    public void DeviceName_IsReadFromLlamaLog(string line, string expected) =>
+        Assert.Equal(expected, LlamaSentenceCorrector.DeviceLine.Match(line).Groups["name"].Value);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+    }
+}
+
 /// <summary>
 /// Runs the real model when REDLINE_GRMR_MODEL points at GRMR-V3-G1B-Q4_K_M.gguf (skipped otherwise:
-/// the file is 806 MB and isn't in the repository).
+/// the file is 806 MB and isn't in the repository). On the GPU when there is one; REDLINE_GRMR_GPU=0 forces the CPU.
 /// </summary>
-public class GrmrModelIntegrationTests
+public class GrmrModelIntegrationTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     private static readonly string? ModelPath = Environment.GetEnvironmentVariable("REDLINE_GRMR_MODEL");
 
@@ -299,7 +363,9 @@ public class GrmrModelIntegrationTests
         if (string.IsNullOrEmpty(ModelPath) || !File.Exists(ModelPath))
             return; // not configured on this machine
 
-        using var corrector = new LlamaSentenceCorrector(ModelPath, NullLogger.Instance);
+        bool gpu = Environment.GetEnvironmentVariable("REDLINE_GRMR_GPU") != "0";
+        using var corrector = LlamaSentenceCorrector.Create(ModelPath, gpu, new GpuGuard(null), NullLogger.Instance);
+        output.WriteLine($"Running on {corrector.Device}");
         Assert.Equal("She goes to school every day.", await corrector.CorrectAsync("She go to school every day.", default));
         Assert.Equal("The results were better than expected.", await corrector.CorrectAsync("The results was better then expected.", default));
         const string fine = "Please review the attached document and let me know if you have any questions.";

@@ -171,6 +171,12 @@ public partial class App : Application
         var corrections = _services.GetRequiredService<CorrectionController>();
         corrections.Notify += (message, isError) => _tray.Notify(message, isError);
 
+        if (_services.GetRequiredService<GpuGuard>().CrashedLastTime)
+        {
+            _logger.LogWarning("The previous run ended while the grammar model was starting on the GPU; using the CPU");
+            _tray.Notify("Redline closed unexpectedly while starting the AI grammar model on the graphics card. It now runs on the processor (Settings > Writing).", true);
+        }
+
         if (log.LogDirectory is { } logDir && CrashReport.TakePending(logDir) is { } report)
         {
             _logger.LogWarning("The previous run ended unexpectedly; crash report {Report}", System.IO.Path.GetFileName(report));
@@ -294,7 +300,15 @@ public partial class App : Application
     private void ApplyAiGrammar(RedlineSettings? old, RedlineSettings s)
     {
         var services = _services!;
-        services.GetRequiredService<GrmrAnalyzer>().Enabled = s.Writing.AiGrammar;
+        var grmr = services.GetRequiredService<GrmrAnalyzer>();
+        grmr.Enabled = s.Writing.AiGrammar;
+        if (old is not null && old.Writing.AiGrammarUseGpu != s.Writing.AiGrammarUseGpu)
+        {
+            _logger?.LogInformation("AI grammar on the GPU: {Enabled}", s.Writing.AiGrammarUseGpu);
+            if (s.Writing.AiGrammarUseGpu)
+                services.GetRequiredService<GpuGuard>().Reset(); // the user asked to try again
+            _ = grmr.ReleaseModelAsync(); // reloads on the next sentence, on the new device
+        }
         if (old is null || old.Writing.AiGrammar == s.Writing.AiGrammar) return;
 
         _logger?.LogInformation("AI grammar: {Enabled}", s.Writing.AiGrammar);
@@ -336,11 +350,15 @@ public partial class App : Application
             sp.GetRequiredService<IPersonalDictionary>(), sp.GetRequiredService<SettingsStore>().Current.General.Language, sp.GetRequiredService<ILogger<SpellAnalyzer>>()));
         services.AddSingleton<ITextAnalyzer>(sp => new HarperAnalyzer(sp.GetRequiredService<ILogger<HarperAnalyzer>>()));
         services.AddSingleton(sp => new GrmrModelStore(GrmrModelStore.DefaultDirectory, Version, sp.GetRequiredService<ILogger<GrmrModelStore>>()));
+        services.AddSingleton(_ => new GpuGuard(GrmrModelStore.DefaultDirectory));
         services.AddSingleton(sp =>
         {
             var store = sp.GetRequiredService<GrmrModelStore>();
+            var settings = sp.GetRequiredService<SettingsStore>();
+            var guard = sp.GetRequiredService<GpuGuard>();
             var llamaLogger = sp.GetRequiredService<ILogger<LlamaSentenceCorrector>>();
-            return new GrmrAnalyzer(() => store.InstalledPath, path => new LlamaSentenceCorrector(path, llamaLogger),
+            return new GrmrAnalyzer(() => store.InstalledPath,
+                path => LlamaSentenceCorrector.Create(path, settings.Current.Writing.AiGrammarUseGpu, guard, llamaLogger),
                 sp.GetRequiredService<ILogger<GrmrAnalyzer>>());
         });
         services.AddSingleton<ITextAnalyzer>(sp => sp.GetRequiredService<GrmrAnalyzer>());
@@ -566,7 +584,8 @@ public partial class App : Application
                 _services.GetRequiredService<UpdateService>(),
                 _services.GetRequiredService<GrmrModelStore>(),
                 RemoveGrammarModelAsync,
-                _services.GetRequiredService<CompatibilityLog>());
+                _services.GetRequiredService<CompatibilityLog>(),
+                AiDeviceStatus);
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Show();
         }
@@ -574,6 +593,25 @@ public partial class App : Application
         {
             _settingsWindow.Activate();
         }
+    }
+
+    /// <summary>Settings > Writing: where the AI grammar model runs, or will run.</summary>
+    private string AiDeviceStatus()
+    {
+        var services = _services!;
+        var writing = services.GetRequiredService<SettingsStore>().Current.Writing;
+        if (!writing.AiGrammarUseGpu)
+            return "The model runs on the processor.";
+        if (services.GetRequiredService<GpuGuard>().Blocked)
+            return "The graphics card crashed while running the model, so it runs on the processor. Turn this off and on again to retry.";
+        if (LlamaSentenceCorrector.GpuNeedsRestart)
+            return "Restart Redline to move the model to the graphics card.";
+        return services.GetRequiredService<GrmrAnalyzer>().Device switch
+        {
+            null => "Uses a graphics card with Vulkan support (NVIDIA, AMD, Intel) if there is one, otherwise the processor.",
+            "CPU" => "Running on the processor: no usable graphics card was found.",
+            var device => "Running on the graphics card (" + device["GPU: ".Length..] + ").",
+        };
     }
 
     /// <summary>Turns AI grammar off, unloads the model and deletes it. False if the file couldn't be deleted.</summary>

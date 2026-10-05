@@ -37,7 +37,7 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
 
     private readonly SemaphoreSlim _signal = new(0);
     private readonly SemaphoreSlim _engineGate = new(1, 1);
-    private ISentenceCorrector? _corrector; // guarded by _engineGate
+    private volatile ISentenceCorrector? _corrector; // written under _engineGate
     private readonly CancellationTokenSource _shutdown = new();
     private Task? _worker;
     private volatile bool _enabled;
@@ -73,6 +73,9 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
 
     /// <summary>True once loading the runtime or model failed; stays off until restart.</summary>
     public bool Failed => _failed;
+
+    /// <summary>Where the loaded model runs ("CPU", "GPU: name"), or null while it isn't loaded.</summary>
+    public string? Device => _corrector?.Device;
 
     /// <summary>New suggestions are cached for text that was analyzed before they existed. Background thread.</summary>
     public event Action? ResultsReady;

@@ -32,6 +32,8 @@ public partial class SettingsWindow : Window
     private readonly GrmrModelStore _models;
     private readonly CompatibilityLog _compatibility;
     private readonly Func<Task<bool>> _removeModel;
+    private readonly Func<string> _aiDeviceStatus;
+    private readonly System.Windows.Threading.DispatcherTimer _aiDeviceTimer;
     private string? _modelNote;
     private bool _loading;
 
@@ -39,8 +41,9 @@ public partial class SettingsWindow : Window
         SettingsStore store, HotkeyManager hotkeys, IPersonalDictionary dictionary, IgnoreList ignores,
         IReadOnlyList<string> languages, string? activeLanguage, IReadOnlyCollection<string> builtInExclusions,
         string? logDirectory, UpdateService updates, GrmrModelStore models, Func<Task<bool>> removeModel,
-        CompatibilityLog compatibility)
+        CompatibilityLog compatibility, Func<string> aiDeviceStatus)
     {
+        _aiDeviceStatus = aiDeviceStatus;
         _compatibility = compatibility;
         _models = models;
         _removeModel = removeModel;
@@ -69,6 +72,14 @@ public partial class SettingsWindow : Window
         ShowModelState();
         LoadCompatibility();
         LoadSettings(store.Current);
+
+        // The model loads in the background, so where it runs is only known later.
+        _aiDeviceTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(2),
+        };
+        _aiDeviceTimer.Tick += (_, _) => ShowAiDevice();
+        _aiDeviceTimer.Start();
         LoadLists();
 
         // Settings can also change elsewhere (tray Pause); dictionary/ignores from the suggestion popup.
@@ -94,6 +105,7 @@ public partial class SettingsWindow : Window
             _updates.Changed -= updateChanged;
             _models.Changed -= modelChanged;
             _compatibility.Changed -= compatibilityChanged;
+            _aiDeviceTimer.Stop();
             _hotkeys.Suspended = false;
         };
     }
@@ -121,6 +133,8 @@ public partial class SettingsWindow : Window
             GrammarBox.IsChecked = s.Writing.Grammar;
             StyleBox.IsChecked = s.Writing.StyleSuggestions;
             AiGrammarBox.IsChecked = s.Writing.AiGrammar;
+            AiGpuBox.IsChecked = s.Writing.AiGrammarUseGpu;
+            ShowAiDevice();
 
             ExcludedList.ItemsSource = s.Applications.Excluded;
         }
@@ -332,13 +346,18 @@ public partial class SettingsWindow : Window
     {
         if (_loading) return;
         bool spelling = SpellingBox.IsChecked == true, grammar = GrammarBox.IsChecked == true,
-            style = StyleBox.IsChecked == true, ai = AiGrammarBox.IsChecked == true;
+            style = StyleBox.IsChecked == true, ai = AiGrammarBox.IsChecked == true, gpu = AiGpuBox.IsChecked == true;
         // Turning AI grammar on starts the model download (App.ApplyAiGrammar).
         _store.Update(s => s with
         {
-            Writing = s.Writing with { Spelling = spelling, Grammar = grammar, StyleSuggestions = style, AiGrammar = ai },
+            Writing = s.Writing with
+            {
+                Spelling = spelling, Grammar = grammar, StyleSuggestions = style, AiGrammar = ai, AiGrammarUseGpu = gpu,
+            },
         });
     }
+
+    private void ShowAiDevice() => AiDeviceHint.Text = _aiDeviceStatus();
 
     // ---- Compatibility ----
 

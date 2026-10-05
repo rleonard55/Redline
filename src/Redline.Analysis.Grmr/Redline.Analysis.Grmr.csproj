@@ -11,6 +11,9 @@
          ships llama.cpp for noavx/avx/avx2/avx512 (~17 MB); LLamaSharp picks the best one at load. -->
     <PackageReference Include="LLamaSharp" Version="0.25.0" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.25.0" ExcludeAssets="native" GeneratePathProperty="true" />
+    <!-- llama.cpp built for Vulkan (~26 MB): one build for NVIDIA, AMD and Intel GPUs through their regular drivers.
+         It still uses ggml-cpu.dll from the CPU backend's avx folders. -->
+    <PackageReference Include="LLamaSharp.Backend.Vulkan.Windows" Version="0.25.0" ExcludeAssets="native" GeneratePathProperty="true" />
   </ItemGroup>
 
   <!-- A RID-specific (self-contained) publish flattens runtimes/win-x64/native/<variant>/*.dll into one folder,
@@ -18,6 +21,9 @@
        LLamaSharp searches (runtimes/win-x64/native/avx2/llama.dll, ...). -->
   <ItemGroup>
     <None Include="$(PkgLLamaSharp_Backend_Cpu)\runtimes\win-x64\native\**\*.dll"
+          Link="runtimes\win-x64\native\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(PkgLLamaSharp_Backend_Vulkan_Windows)\runtimes\win-x64\native\**\*.dll"
           Link="runtimes\win-x64\native\%(RecursiveDir)%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>

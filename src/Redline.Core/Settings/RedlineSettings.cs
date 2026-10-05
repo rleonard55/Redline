@@ -85,6 +85,12 @@ public sealed record WritingSettings
     /// default: it needs a ~800 MB download and ~1 GB of memory while in use.
     /// </summary>
     public bool AiGrammar { get; init; } = false;
+
+    /// <summary>
+    /// Run the AI grammar model on the GPU (Vulkan: NVIDIA, AMD, Intel) when one is available. Same speed
+    /// or faster than the CPU, and it keeps the processor free (about a tenth of the CPU time).
+    /// </summary>
+    public bool AiGrammarUseGpu { get; init; } = true;
 }
 
 public sealed record ApplicationSettings

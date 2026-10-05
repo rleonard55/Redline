@@ -78,6 +78,10 @@
                               Checked="Writing_Changed" Unchecked="Writing_Changed" />
                     <TextBlock Style="{StaticResource Hint}"
                                Text="Catches errors the built-in rules miss, such as &quot;She go to school&quot;. The model runs entirely on this PC: your text never leaves it. It needs a one-time 806 MB download and about 1 GB of memory while in use (freed after 10 idle minutes). Its suggestions appear a moment after the others." />
+                    <CheckBox x:Name="AiGpuBox" Margin="0,10,0,0" Content="Use the graphics card (GPU) when available"
+                              Checked="Writing_Changed" Unchecked="Writing_Changed"
+                              ToolTip="Works with NVIDIA, AMD and Intel graphics through Vulkan. Keeps the processor free; falls back to the processor when there's no usable GPU." />
+                    <TextBlock x:Name="AiDeviceHint" Style="{StaticResource Hint}" />
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <Button x:Name="ModelDownloadButton" Content="Download model" Padding="10,2" Click="ModelDownload_Click" />
                         <Button x:Name="ModelCancelButton" Content="Cancel download" Padding="10,2" Click="ModelCancel_Click" />

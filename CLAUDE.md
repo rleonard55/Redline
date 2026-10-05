@@ -129,6 +129,19 @@ list of app quirks and how each is handled. Read both before changing behavior.
 - Runtime: LLamaSharp **0.25.0** + Backend.Cpu (0.26+ needs Microsoft.Extensions 10.x). The backend's native assets
   are excluded (`ExcludeAssets="native"`) and the win-x64 tree is copied by hand in the csproj: a self-contained
   RID publish otherwise flattens avx/avx2/avx512/noavx into one folder (NETSDK1152).
+- **GPU (Vulkan)**: also ships `LLamaSharp.Backend.Vulkan.Windows` 0.25.0 (`native/vulkan/`, ~26 MB; same hand copy;
+  its llama.dll still loads `ggml-cpu.dll` from the avx folders). One build for NVIDIA/AMD/Intel via the driver's
+  vulkan-1.dll; LLamaSharp detects Vulkan by running `vulkaninfo --summary` (installed with GPU drivers), else CPU.
+  Setting `Writing.AiGrammarUseGpu` (default on). `LlamaSentenceCorrector.Create`: the native library is chosen
+  **once per process** (Vulkan only if the GPU was wanted at first load -> `GpuNeedsRestart`); GPU = all layers,
+  `SplitMode.None`/`MainGpu 0` (only on the GPU: the CPU runtime has no devices and rejects main_gpu 0); a failed
+  GPU load falls back to CPU until restart. Toggling the setting unloads the model; it reloads on the next sentence.
+  `GpuGuard` (models folder): `gpu-trial` marker around the first GPU load+sentence of a session (a driver crash
+  kills the process with nothing to catch); found at startup -> `gpu-blocked` (CPU only) + tray notice, until the
+  user turns the setting off and on. Device name parsed from llama.cpp's "using device ... (name) - N MiB free" log.
+  Measured on Intel Iris Xe (2026-10-04): same latency as CPU (~1.2-1.5 s/sentence, identical output) but ~9x less
+  CPU time (4.5 s vs 41.5 s over 8 sentences); discrete GPUs should also be much faster (not measured here).
+  Real-model test: `REDLINE_GRMR_GPU=0` forces the CPU.
 - `GrmrAnalyzer` (supplementary `ITextAnalyzer`): never waits for the model. `AnalyzeAsync` splits sentences
   (`Core/Text/SentenceSplitter`, <= 500 chars), returns cached results, and replaces the work queue with uncached
   sentences (new/edited first, max 60). One background worker corrects them; when a sentence gets edits it raises

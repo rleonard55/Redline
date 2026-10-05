@@ -113,7 +113,9 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
         GrmrAnalyzer { Enabled: false } => "off",
         GrmrAnalyzer { Failed: true } => "FAILED TO LOAD",
         GrmrAnalyzer { IsAvailable: false } => "not downloaded",
-        _ => analyzer.IsAvailable ? "available" : "UNAVAILABLE",
+        GrmrAnalyzer { Device: { } device } => $"loaded ({device})",
+        GrmrAnalyzer => "available (loads on demand)",
+        _ =>analyzer.IsAvailable ? "available" : "UNAVAILABLE",
     };
 
     private void ShowResult(AnalysisResult r)
