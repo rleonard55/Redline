@@ -146,6 +146,7 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(GeneralSettings.MaxDelayMs, c.General.AnalysisDelayMs);
         Assert.Equal("Ctrl+Alt+.", c.General.Hotkey);
         Assert.True(c.General.HoverSuggestions); // settings added later default on in older files
+        Assert.True(c.General.ParagraphGutter);
     }
 
     public void Dispose()

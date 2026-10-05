@@ -50,6 +50,9 @@ internal sealed class OverlayWindow : Window
         };
     }
 
+    /// <summary>The overlay's window handle (zero until first shown); the gutter pills sit directly below it.</summary>
+    public IntPtr Handle => _hwnd;
+
     /// <summary>Shows squiggles over <paramref name="screenRect"/> (physical pixels), just above <paramref name="target"/>.</summary>
     public void ShowAt(TextBounds screenRect, IReadOnlyList<SquiggleSpan> spans, IntPtr target)
     {

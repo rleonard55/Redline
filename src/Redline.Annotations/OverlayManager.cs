@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Redline.Core.Corrections;
 using Redline.Core.Diagnostics;
 using Redline.Core.Geometry;
 using Redline.Core.Interfaces;
@@ -12,6 +13,10 @@ using Redline.Windows;
 using Redline.Windows.Automation;
 
 namespace Redline.Annotations;
+
+/// <summary>A gutter pill was clicked: fix <paramref name="Paragraph"/> of snapshot <paramref name="SnapshotVersion"/>.</summary>
+/// <param name="Anchor">The paragraph's visible extent (physical pixels), to place the fix popup beside.</param>
+public sealed record ParagraphFixRequest(TextRange Paragraph, long SnapshotVersion, TextBounds Anchor);
 
 /// <summary>
 /// Keeps squiggles under the current surface's issues. Shows them only while the target window is
@@ -28,6 +33,10 @@ namespace Redline.Annotations;
 public sealed class OverlayManager : IDisposable
 {
     private const int MaxIssuesDrawn = 150;
+    private const int MaxGutterPills = 30;
+
+    /// <summary>A paragraph gets a gutter pill when it has at least this many fixes (one fix is the hover pill's job).</summary>
+    public const int GutterMinChanges = 2;
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan AnchorInterval = TimeSpan.FromMilliseconds(100);
@@ -55,6 +64,8 @@ public sealed class OverlayManager : IDisposable
     private bool _layoutRunning;
     private bool _layoutAgain;
     private int _lastSpanCount = -1;
+    private readonly List<GutterPill> _gutterPills = new();
+    private bool _gutterEnabled = true;
 
     // Scroll detection: one drawn word's range and where it was when last drawn.
     private (TextRange Range, TextBounds Rect)? _anchor;
@@ -97,6 +108,22 @@ public sealed class OverlayManager : IDisposable
 
     /// <summary>The hover pill's "⋯" was clicked: show the full suggestion popup. Raised on the UI thread.</summary>
     public event Action<TextIssue>? MoreRequested;
+
+    /// <summary>A paragraph's gutter pill was clicked. Raised on the UI thread.</summary>
+    public event Action<ParagraphFixRequest>? ParagraphFixRequested;
+
+    /// <summary>Show a bar in the left gutter of paragraphs with several fixes. UI thread.</summary>
+    public bool GutterEnabled
+    {
+        get => _gutterEnabled;
+        set
+        {
+            if (_gutterEnabled == value) return;
+            _gutterEnabled = value;
+            if (!value) HideGutter();
+            RequestLayout();
+        }
+    }
 
     /// <summary>Show the quick-fix pill when the pointer rests on a squiggle. UI thread.</summary>
     public bool HoverEnabled
@@ -266,7 +293,11 @@ public sealed class OverlayManager : IDisposable
             .Select(g => g.OrderBy(i => CategoryPriority(i.Category)).First())
             .Take(MaxIssuesDrawn)
             .ToList();
-        var bounds = await adapter.GetBoundsAsync(drawn.Select(i => i.Range).ToList(), snapshot.Text);
+        // Paragraphs worth a gutter pill are measured in the same round trip as the squiggles.
+        var paragraphs = _gutterEnabled ? ParagraphsToOffer(snapshot.Text, issues) : [];
+        var measured = await adapter.GetBoundsAsync(drawn.Select(i => i.Range).Concat(paragraphs.Select(p => p.Range)).ToList(), snapshot.Text);
+        var bounds = measured.Take(drawn.Count).ToList();
+        var paragraphBounds = measured.Skip(drawn.Count).ToList();
         _compatibility?.Layout(adapter.Context, bounds.Count(b => b.Any(r => !r.IsEmpty)), drawn.Count);
 
         // Anything may have changed while we were away on the UIA thread.
@@ -303,6 +334,7 @@ public sealed class OverlayManager : IDisposable
         _window ??= new OverlayWindow();
         _window.ShowAt(surface.Value, spans, _root);
         _hover.SetRegions(_root, regions);
+        ShowGutter(surface.Value, paragraphs, paragraphBounds, snapshot.Version);
         _perf?.Record("overlay", sw.Elapsed);
 
         int anchorIndex = bounds.ToList().FindIndex(b => b.Count > 0);
@@ -348,6 +380,7 @@ public sealed class OverlayManager : IDisposable
                     _scrolling = true;
                     _window?.HideOverlay();
                     _hover.Clear(disarm: false);
+                    HideGutter();
                 }
             }
             else if (_scrolling)
@@ -366,6 +399,54 @@ public sealed class OverlayManager : IDisposable
         }
     }
 
+    /// <summary>Paragraphs holding at least <see cref="GutterMinChanges"/> fixes, with the count and most severe category.</summary>
+    private static List<(TextRange Range, int Changes, IssueCategory Category)> ParagraphsToOffer(string text, IssueSet issues)
+    {
+        var result = new List<(TextRange, int, IssueCategory)>();
+        foreach (var range in issues.Issues.Select(i => CompositeFix.ParagraphAt(text, i.StartOffset)).Distinct())
+        {
+            var fix = CompositeFix.Build(text, issues.SnapshotVersion, issues.Issues, range, FixScope.Paragraph);
+            if (fix.Edits.Count < GutterMinChanges) continue;
+            result.Add((range, fix.Edits.Count, fix.Edits.Select(e => e.Category).MinBy(CategoryPriority)));
+            if (result.Count == MaxGutterPills) break;
+        }
+        return result;
+    }
+
+    private void ShowGutter(TextBounds surface, List<(TextRange Range, int Changes, IssueCategory Category)> paragraphs,
+        List<IReadOnlyList<TextBounds>> lines, long version)
+    {
+        double scale = System.Windows.Media.VisualTreeHelper.GetDpi(_window!).DpiScaleX;
+        int shown = 0;
+        for (int i = 0; i < paragraphs.Count; i++)
+        {
+            if (GutterLayout.Place(lines[i], surface, scale) is not { } rect || GutterLayout.Extent(lines[i], surface) is not { } extent)
+                continue;
+            if (shown == _gutterPills.Count)
+            {
+                var created = new GutterPill();
+                created.Clicked += () => OnGutterClicked(created);
+                _gutterPills.Add(created);
+            }
+            var pill = _gutterPills[shown++];
+            pill.Tag = new ParagraphFixRequest(paragraphs[i].Range, version, extent);
+            pill.ShowAt(rect, SquiggleLayer.ColorFor(paragraphs[i].Category), $"Fix this paragraph ({paragraphs[i].Changes} changes)", _window!.Handle);
+        }
+        for (int i = shown; i < _gutterPills.Count; i++)
+            _gutterPills[i].HidePill();
+    }
+
+    private void OnGutterClicked(GutterPill pill)
+    {
+        if (pill.Tag is not ParagraphFixRequest request || _document.Current?.Version != request.SnapshotVersion) return;
+        ParagraphFixRequested?.Invoke(request);
+    }
+
+    private void HideGutter()
+    {
+        foreach (var pill in _gutterPills) pill.HidePill();
+    }
+
     private static int CategoryPriority(IssueCategory category) => category switch
     {
         IssueCategory.Spelling => 0,
@@ -379,6 +460,7 @@ public sealed class OverlayManager : IDisposable
     {
         _window?.HideOverlay();
         _hover.Clear(disarm: false);
+        HideGutter();
         _lastSpanCount = -1;
     }
 
@@ -388,6 +470,7 @@ public sealed class OverlayManager : IDisposable
         _settle.Stop();
         _anchorTimer.Stop();
         _hover.Dispose();
+        foreach (var pill in _gutterPills) pill.Close();
         _window?.Close();
     }
 

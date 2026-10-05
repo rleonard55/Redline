@@ -65,6 +65,9 @@ public sealed record GeneralSettings
     /// <summary>Show a small quick-fix pill when the mouse pointer rests on an underline.</summary>
     public bool HoverSuggestions { get; init; } = true;
 
+    /// <summary>Show a thin bar beside paragraphs with several fixes; clicking it opens the paragraph fix.</summary>
+    public bool ParagraphGutter { get; init; } = true;
+
     /// <summary>Daily check of GitHub Releases for a newer version (installing always needs a click).</summary>
     public bool CheckForUpdates { get; init; } = true;
 

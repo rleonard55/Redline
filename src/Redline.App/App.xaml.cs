@@ -223,6 +223,7 @@ public partial class App : Application
         var overlay = _services.GetRequiredService<OverlayManager>();
         overlay.ApplyRequested += issue => _ = corrections.ApplyFirstSuggestionAsync(issue);
         overlay.MoreRequested += issue => _ = corrections.ShowForIssueAsync(issue);
+        overlay.ParagraphFixRequested += request => _ = corrections.ShowParagraphFixAsync(request.Paragraph, request.SnapshotVersion, request.Anchor);
         overlay.Start();
 
         try
@@ -313,6 +314,7 @@ public partial class App : Application
         if (old is not null && !old.Applications.Excluded.SequenceEqual(s.Applications.Excluded, StringComparer.OrdinalIgnoreCase))
             _services.GetRequiredService<SurfaceTracker>().Reevaluate(); // the current app may be excluded now
         _services.GetRequiredService<OverlayManager>().HoverEnabled = s.General.HoverSuggestions;
+        _services.GetRequiredService<OverlayManager>().GutterEnabled = s.General.ParagraphGutter;
 
         if (_log is not null) _log.FileLevel = s.General.DiagnosticsMode ? LogLevel.Debug : LogLevel.Information;
         // Timers only start/stop on an actual change; Start() on a running timer would restart its interval.

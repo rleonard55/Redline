@@ -210,6 +210,24 @@ list of app quirks and how each is handled. Read both before changing behavior.
   Interactive engine tests incl. 3 batch tests pass; `SelectAndPaste_AppliesAndRestoresTheClipboard` failed in its
   own `Clipboard.SetText` (CLIPBRD_E_CANT_OPEN, another process held the clipboard) - unrelated.
 
+### Paragraph gutter pill (2026-10-05, live-tested)
+- A thin vertical bar left of every visible paragraph with >= 2 fixes (`OverlayManager.GutterMinChanges`; one fix
+  is the hover pill's job); click = `FixPopup` for that paragraph (`CorrectionController.ShowParagraphFixAsync`,
+  anchored at the paragraph's extent, Paragraph scope first). Setting `General.ParagraphGutter` (default on,
+  Settings > General).
+- `Core/Geometry/GutterLayout` (pure, tested): 4 px bar, 6 px gap, 12 px clickable strip (alpha-1 background:
+  layered windows pass clicks through fully transparent pixels), as tall as the visible lines (min 14 px), and the
+  bar stays **inside** the surface (text at the control's edge -> flush with it, not outside the window).
+- `OverlayManager` measures the paragraphs in the **same** `GetBoundsAsync` call as the squiggles (no extra round
+  trip, only while the target is in front) and hides the pills with the squiggles (scroll, move, other app).
+  `GutterPill` (Annotations): WS_EX_NOACTIVATE + MA_NOACTIVATE like the hover pill; z-order = directly below the
+  overlay (`OverlayWindow.Handle`), i.e. just above the target, so the target's menus still cover it. Max 30 pills.
+- Live e2e: `tools/manual-tests/scripts/redline_gutter_e2e.ps1 [-Indent 40]`: 2 pills (not on the 1-issue
+  paragraph), click -> popup -> Enter -> 3 of 3 applied to that paragraph only, its pill goes away. **PASS
+  2026-10-05** at the window edge and indented. Once (indented) the popup was dismissed before Enter ("0 edits
+  chosen" = it lost activation); the rerun passed - watch for it. Don't run these while the user is typing: a run
+  during the user's ChatGPT session never attached to the form (Redline stayed on ChatGPT).
+
 ### Phase gaps closed (2026-10-04, after the plan review)
 - **Overlay on DPI change:** `OverlayWindow.ShowAt` re-applies its exact rectangle if `WM_DPICHANGED` (sent during
   `SetWindowPos` onto a monitor with another scale) made WPF resize it. Not verifiable here (one monitor).

@@ -56,6 +56,8 @@
 
                     <CheckBox x:Name="HoverBox" Content="Show a quick fix when I point at an underline" Margin="0,12,0,0"
                               Checked="General_Changed" Unchecked="General_Changed" />
+                    <CheckBox x:Name="GutterBox" Content="Show a bar beside paragraphs with several fixes" Margin="0,8,0,0"
+                              Checked="General_Changed" Unchecked="General_Changed" />
 
                     <CheckBox x:Name="StartupBox" Content="Start Redline when I sign in to Windows" Margin="0,16,0,0"
                               Checked="General_Changed" Unchecked="General_Changed" />

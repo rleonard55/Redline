@@ -126,6 +126,7 @@ public partial class SettingsWindow : Window
             UpdateHotkeyHint(s);
             StartupBox.IsChecked = s.General.StartWithWindows;
             HoverBox.IsChecked = s.General.HoverSuggestions;
+            GutterBox.IsChecked = s.General.ParagraphGutter;
             DiagnosticsBox.IsChecked = s.General.DiagnosticsMode;
             UpdatesBox.IsChecked = s.General.CheckForUpdates;
 
@@ -155,8 +156,9 @@ public partial class SettingsWindow : Window
     private void General_Changed(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
-        bool enabled = EnabledBox.IsChecked == true, startup = StartupBox.IsChecked == true, hover = HoverBox.IsChecked == true;
-        _store.Update(s => s with { General = s.General with { Enabled = enabled, StartWithWindows = startup, HoverSuggestions = hover } });
+        bool enabled = EnabledBox.IsChecked == true, startup = StartupBox.IsChecked == true, hover = HoverBox.IsChecked == true,
+            gutter = GutterBox.IsChecked == true;
+        _store.Update(s => s with { General = s.General with { Enabled = enabled, StartWithWindows = startup, HoverSuggestions = hover, ParagraphGutter = gutter } });
     }
 
     // ---- About / updates ----

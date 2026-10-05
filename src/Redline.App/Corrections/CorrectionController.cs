@@ -144,6 +144,38 @@ public sealed class CorrectionController
     }
 
     /// <summary>
+    /// Gutter pill: the fix preview for <paramref name="paragraph"/> of snapshot <paramref name="version"/>, beside
+    /// <paramref name="anchor"/> (the paragraph's visible extent, already measured by the overlay).
+    /// </summary>
+    public async Task ShowParagraphFixAsync(TextRange paragraph, long version, TextBounds anchor)
+    {
+        if (_busy) return;
+        _busy = true;
+        try
+        {
+            var adapter = _tracker.CurrentAdapter;
+            var text = _document.Current?.Text;
+            if (adapter is null || text is null || _document.Current!.Version != version ||
+                _cache.Get(adapter.Context.SurfaceId, version) is not { } issues)
+            {
+                Notify?.Invoke("That paragraph is out of date — the text or focus changed.", false);
+                return;
+            }
+            var first = issues.Issues.FirstOrDefault(i => i.StartOffset >= paragraph.Start && i.Range.End <= paragraph.End);
+            await ShowFixAsync(adapter, Scopes(text, version, issues, first?.StartOffset ?? paragraph.Start), initialScope: 1, anchor);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Correction flow failed");
+            Notify?.Invoke("Something went wrong showing the paragraph fix.", true);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>
     /// Hover pill: apply <paramref name="issue"/>'s first suggestion straight away. The pill never takes
     /// focus, so the target is still in front; the engine verifies everything before it types.
     /// </summary>
@@ -187,9 +219,8 @@ public sealed class CorrectionController
         string? fixMoreLabel = null;
         if (text.Length > 0 && _cache.Get(adapter.Context.SurfaceId, issue.SnapshotVersion) is { } issues)
         {
-            var sentence = CompositeFix.Build(text, issue.SnapshotVersion, issues.Issues, CompositeFix.SentenceAt(text, issue.StartOffset), FixScope.Sentence);
-            var paragraph = CompositeFix.Build(text, issue.SnapshotVersion, issues.Issues, CompositeFix.ParagraphAt(text, issue.StartOffset), FixScope.Paragraph);
-            scopes = [sentence, paragraph];
+            scopes = Scopes(text, issue.SnapshotVersion, issues, issue.StartOffset);
+            var paragraph = scopes[1];
             if (paragraph.Edits.Count >= 2)
                 fixMoreLabel = $"Fix this paragraph ({paragraph.Edits.Count} changes)...";
             else if (_grammarModel.IsAvailable)
@@ -273,6 +304,13 @@ public sealed class CorrectionController
             Notify?.Invoke(message, result.Last.Outcome == CorrectionOutcome.Unverified);
         }
     }
+
+    /// <summary>The sentence and paragraph holding <paramref name="offset"/>, in that order.</summary>
+    private static CompositeFix[] Scopes(string text, long version, IssueSet issues, int offset) =>
+    [
+        CompositeFix.Build(text, version, issues.Issues, CompositeFix.SentenceAt(text, offset), FixScope.Sentence),
+        CompositeFix.Build(text, version, issues.Issues, CompositeFix.ParagraphAt(text, offset), FixScope.Paragraph),
+    ];
 
     private async Task LoadAlternativesAsync(FixPopup popup, string text, TextRange range, CancellationToken ct)
     {
