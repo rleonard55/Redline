@@ -4,8 +4,14 @@
     STARTWITHWINDOWS  1 (default) registers HKCU Run "Redline"; on upgrade the user's current choice wins.
     LAUNCHAPP         1 (default) starts Redline when installation finishes.
   User data (%LOCALAPPDATA%\Redline: settings, dictionary, logs) is left in place on uninstall.
+
+  Offline variant (build.ps1 -Offline defines ModelDir): also installs the GRMR-V3 grammar model, its NOTICE and
+  license texts into %LOCALAPPDATA%\Redline\models, where the app looks for a downloaded model. Those components are
+  Permanent: a later regular (model-less) upgrade or an uninstall leaves the model, like the rest of the user data.
+  The model is a Gemma derivative, so this variant shows a license agreement (Gemma Terms of Use 3.1: the use
+  restrictions must be part of an agreement governing its use).
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="Redline"
            Manufacturer="Redline"
            Version="$(var.ProductVersion)"
@@ -13,12 +19,24 @@
            Scope="perUser"
            Language="1033">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Redline is already installed." />
+    <!-- Same-version upgrades: the offline and regular MSIs of one version replace each other instead of
+         installing side by side. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Redline is already installed." AllowSameVersionUpgrades="yes" />
+<?ifdef ModelDir?>
+    <!-- The model is already compressed (quantized weights): store it as is, in its own cabinet. -->
+    <Media Id="1" Cabinet="app.cab" EmbedCab="yes" CompressionLevel="high" />
+    <Media Id="2" Cabinet="model.cab" EmbedCab="yes" CompressionLevel="none" />
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+<?else?>
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+<?endif?>
 
     <Icon Id="RedlineIcon" SourceFile="$(var.RepoRoot)src\Redline.App\Redline.ico" />
     <Property Id="ARPPRODUCTICON" Value="RedlineIcon" />
-    <Property Id="ARPNOMODIFY" Value="1" />
+<?ifndef ModelDir?>
+    <Property Id="ARPNOMODIFY" Value="1" /> <!-- WixUI_Minimal (offline variant) sets it itself -->
+<?endif?>
 
     <Property Id="STARTWITHWINDOWS" Value="1" Secure="yes" />
     <Property Id="LAUNCHAPP" Value="1" Secure="yes" />
@@ -43,13 +61,41 @@
       <Directory Id="ProgramsFolder" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="Redline" />
       </Directory>
+<?ifdef ModelDir?>
+      <Directory Id="UserDataFolder" Name="Redline">
+        <Directory Id="MODELFOLDER" Name="models" />
+      </Directory>
+<?endif?>
     </StandardDirectory>
 
     <Feature Id="Main" Title="Redline">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="RunAtSignIn" />
+<?ifdef ModelDir?>
+      <ComponentGroupRef Id="ModelFiles" />
+<?endif?>
     </Feature>
+
+<?ifdef ModelDir?>
+    <ComponentGroup Id="ModelFiles" Directory="MODELFOLDER">
+      <Component Id="GrammarModel" Permanent="yes">
+        <File Id="GrammarModelFile" Source="$(var.ModelDir)GRMR-V3-G1B-Q4_K_M.gguf" DiskId="2" KeyPath="yes" />
+      </Component>
+      <Component Id="GrammarModelNotice" Permanent="yes">
+        <File Id="GrammarModelNoticeFile" Source="$(var.ModelDir)NOTICE.txt" DiskId="2" KeyPath="yes" />
+      </Component>
+      <Component Id="GrammarModelGemmaTerms" Permanent="yes">
+        <File Id="GrammarModelGemmaTermsFile" Source="$(var.ModelDir)Gemma-Terms-of-Use.txt" DiskId="2" KeyPath="yes" />
+      </Component>
+      <Component Id="GrammarModelGemmaPolicy" Permanent="yes">
+        <File Id="GrammarModelGemmaPolicyFile" Source="$(var.ModelDir)Gemma-Prohibited-Use-Policy.txt" DiskId="2" KeyPath="yes" />
+      </Component>
+      <Component Id="GrammarModelLicense" Permanent="yes">
+        <File Id="GrammarModelLicenseFile" Source="$(var.ModelDir)GRMR-V3-G1B-LICENSE.txt" DiskId="2" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+<?endif?>
 
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
       <Component Id="MainExe">

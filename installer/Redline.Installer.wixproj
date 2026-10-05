@@ -3,10 +3,17 @@
   <PropertyGroup>
     <InstallerPlatform>x64</InstallerPlatform>
     <OutputName>Redline-$(Version)-x64</OutputName>
+    <!-- build.ps1 -Offline passes ModelDir (staged model + its notices) and LicenseRtf. -->
+    <OutputName Condition="'$(ModelDir)' != ''">Redline-$(Version)-x64-offline</OutputName>
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish\</PublishDir>
     <DefineConstants>ProductVersion=$(Version);PublishDir=$(PublishDir);RepoRoot=$(MSBuildThisFileDirectory)..\</DefineConstants>
+    <DefineConstants Condition="'$(ModelDir)' != ''">$(DefineConstants);ModelDir=$(ModelDir);LicenseRtf=$(LicenseRtf)</DefineConstants>
     <!-- Per-user install into %LOCALAPPDATA%\Programs: file key paths and profile folders are intended.
          ICE69: the shortcut and Run value point at Redline.exe from other components of the same feature. -->
-    <SuppressIces>ICE38;ICE64;ICE69;ICE91</SuppressIces>
+    <!-- ICE61: same-version upgrades are intended (offline and regular MSIs of one version replace each other). -->
+    <SuppressIces>ICE38;ICE61;ICE64;ICE69;ICE91</SuppressIces>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+  </ItemGroup>
 </Project>

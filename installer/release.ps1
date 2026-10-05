@@ -2,8 +2,10 @@
 # (plus the third-party notices). The version is <Version> in Directory.Build.props; bump and commit it first.
 # Usage: powershell -ExecutionPolicy Bypass -File installer/release.ps1 [-Draft] [-Notes "text" | -NotesFile notes.md]
 # Prefer -NotesFile: notes passed as text through "powershell -File" are cut at the first double quote (v0.9.0).
+# -WithOffline also builds and uploads Redline-X.Y.Z-x64-offline.msi (the GRMR-V3 model inside, ~840 MB; see
+# build.ps1 -Offline). The updater only ever takes Redline-X.Y.Z-x64.msi.
 # Needs: gh (signed in), cargo, cargo-about, .NET 9 SDK.
-param([switch]$Draft, [string]$Notes, [string]$NotesFile)
+param([switch]$Draft, [string]$Notes, [string]$NotesFile, [switch]$WithOffline)
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
@@ -49,6 +51,18 @@ try {
     # The updater trusts GitHub's asset digest; make sure it matches what was built here.
     $digest = gh release view $tag --json assets --jq ".assets[] | select(.name == \`"Redline-$version-x64.msi\`") | .digest"
     if ($digest -ne "sha256:$sha") { throw "Uploaded MSI digest '$digest' doesn't match the local build (sha256:$sha)." }
+
+    if ($WithOffline) {
+        & (Join-Path $PSScriptRoot 'build.ps1') -SkipHarper -Offline
+        $offline = Join-Path $root "artifacts\Redline-$version-x64-offline.msi"
+        if (-not (Test-Path $offline)) { throw "$offline was not built." }
+        $offlineSha = (Get-FileHash $offline -Algorithm SHA256).Hash.ToLowerInvariant()
+        Write-Host "==> Uploading $(Split-Path $offline -Leaf)" -ForegroundColor Cyan
+        gh release upload $tag $offline
+        if ($LASTEXITCODE -ne 0) { throw "Uploading the offline MSI failed (exit $LASTEXITCODE)." }
+        $offlineDigest = gh release view $tag --json assets --jq ".assets[] | select(.name == \`"Redline-$version-x64-offline.msi\`") | .digest"
+        if ($offlineDigest -ne "sha256:$offlineSha") { throw "Uploaded offline MSI digest '$offlineDigest' doesn't match (sha256:$offlineSha)." }
+    }
     if ($tempNotes) {
         Remove-Item $tempNotes -ErrorAction SilentlyContinue
         [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)

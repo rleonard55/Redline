@@ -3,7 +3,8 @@
 # upstream; their NuGet packages carry only a license expression), and the bundled .NET runtime / Microsoft.Extensions.
 # Usage: powershell -ExecutionPolicy Bypass -File installer/make-notices.ps1 -PublishDir artifacts\publish
 # Needs cargo-about: cargo install cargo-about --locked --features cli
-param([Parameter(Mandatory)][string]$PublishDir)
+# -ModelIncluded: the offline installer ships the GRMR-V3 model; its section then carries the full license texts.
+param([Parameter(Mandatory)][string]$PublishDir, [switch]$ModelIncluded)
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
@@ -89,13 +90,29 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine($rule)
 [void]$sb.AppendLine((LicenseFile 'dotnet-extensions.txt'))
 [void]$sb.AppendLine($rule)
-[void]$sb.AppendLine('GRMR-V3-G1B grammar model (not included; downloaded only if you turn on AI grammar)')
+if ($ModelIncluded) {
+    [void]$sb.AppendLine('GRMR-V3-G1B grammar model (included; installed to %LOCALAPPDATA%\Redline\models)')
+} else {
+    [void]$sb.AppendLine('GRMR-V3-G1B grammar model (not included; downloaded only if you turn on AI grammar)')
+}
 [void]$sb.AppendLine('https://huggingface.co/qingy2024/GRMR-V3-G1B')
 [void]$sb.AppendLine($rule)
 [void]$sb.AppendLine('The model is licensed under Apache-2.0 by its author. It is fine-tuned from Google''s Gemma 3 1B,')
 [void]$sb.AppendLine('so its use is also subject to the Gemma Terms of Use and Prohibited Use Policy:')
 [void]$sb.AppendLine('https://ai.google.dev/gemma/terms')
 [void]$sb.AppendLine()
+if ($ModelIncluded) {
+    [void]$sb.AppendLine('Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms')
+    [void]$sb.AppendLine()
+    [void]$sb.AppendLine('You must not use the model for the restricted uses in the Gemma Prohibited Use Policy or in')
+    [void]$sb.AppendLine('violation of applicable laws and regulations (Gemma Terms of Use, Section 3.2).')
+    [void]$sb.AppendLine()
+    [void]$sb.AppendLine((LicenseFile 'Apache-2.0.txt'))
+    [void]$sb.AppendLine($rule)
+    [void]$sb.AppendLine((LicenseFile 'Gemma-Terms-of-Use.txt'))
+    [void]$sb.AppendLine($rule)
+    [void]$sb.AppendLine((LicenseFile 'Gemma-Prohibited-Use-Policy.txt'))
+}
 [void]$sb.AppendLine($rule)
 [void]$sb.AppendLine(".NET runtime $core (Microsoft.NETCore.App), Microsoft.Extensions and System.* libraries")
 [void]$sb.AppendLine('https://github.com/dotnet/runtime')
