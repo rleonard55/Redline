@@ -115,7 +115,7 @@ public sealed class DiagnosticsViewModel : INotifyPropertyChanged
         GrmrAnalyzer { IsAvailable: false } => "not downloaded",
         GrmrAnalyzer { Device: { } device } => $"loaded ({device})",
         GrmrAnalyzer => "available (loads on demand)",
-        _ =>analyzer.IsAvailable ? "available" : "UNAVAILABLE",
+        _ => analyzer.IsAvailable ? "available" : $"UNAVAILABLE ({analyzer.UnavailableReason ?? "see the log"})",
     };
 
     private void ShowResult(AnalysisResult r)

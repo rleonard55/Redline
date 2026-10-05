@@ -85,6 +85,21 @@ list of app quirks and how each is handled. Read both before changing behavior.
   upgrade with startup turned off (stays off), uninstall while running (8 s, everything removed). Not tested: the
   interactive (non-/qn) install, which has no wizard UI — just the progress dialog.
 
+### Locked-down PCs: optional model, visible failures (2026-10-05)
+- Report: on an org PC the model download was blocked and the user saw no underlines anywhere, with no error.
+  Repro (scratchpad `blocked_repro.ps1`: fresh user = model renamed + aiGrammar off, `HTTPS_PROXY` to a local
+  proxy answering CONNECT with 403, AI grammar turned on from `--welcome` via UIA Invoke, then a 2-misspelling
+  probe form): a blocked download alone does NOT stop spelling (pill shown) - not reproducible from the download.
+- Hardened what can make Redline silently useless there: `OnStartup` is async void and the dispatcher handler
+  marks exceptions handled, so any startup exception left a tray icon that never checked text. Now `StartAsync`
+  runs under try/catch (error dialog + exit), and extras are `Optional(...)` (compatibility record, diagnostics VM,
+  GPU/crash notices, Run-key sync). `HarperAnalyzer` catches every exception (a policy-blocked DLL must only cost
+  grammar). `ITextAnalyzer.UnavailableReason`; `ReportUnavailableChecking` posts a tray notice when Spelling or
+  Harper is unavailable ("Redline can't check text on this PC" when neither). Diagnostics shows the reason.
+- Model download: `GrmrModelStore.Blocked` (HTTP 403/407/451, proxy refusal, a text/* "block page" with 200);
+  messages say spelling/grammar still work and point to the offline installer. Tests in `GrmrTests`.
+- Still unknown for that user: their log (`%LOCALAPPDATA%\Redline\logs`) would show the analyzer lines.
+
 ### Installer: offline variant and safe upgrades (2026-10-05)
 - `build.ps1 -Offline [-ModelPath x.gguf]` -> `Redline-X.Y.Z-x64-offline.msi` (~840 MB): the app + the GRMR-V3 model
   (size/SHA-256 checked against the pins parsed from `GrmrModelStore.cs`; source = -ModelPath, else this machine's

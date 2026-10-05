@@ -74,6 +74,9 @@ public sealed class GrmrModelStore : IDisposable
     /// <summary>Why the last download failed (for the Settings window).</summary>
     public string? Error { get; private set; }
 
+    /// <summary>The last download failed because the network refused it (proxy or filter), not a flaky connection.</summary>
+    public bool Blocked { get; private set; }
+
     /// <summary>The verified model path, or null when it isn't installed.</summary>
     public string? InstalledPath => State == ModelState.Installed ? ModelPath : null;
 
@@ -142,6 +145,9 @@ public sealed class GrmrModelStore : IDisposable
             if (have > 0 && response.StatusCode != HttpStatusCode.PartialContent)
                 have = 0; // server ignored the range: start over
             response.EnsureSuccessStatusCode();
+            // Web filters often answer with their own "blocked" page and a 200: don't save that as the model.
+            if (response.Content.Headers.ContentType?.MediaType is { } type && type.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+                throw new BlockedDownloadException($"the server sent a web page ({type}) instead of the model");
             _logger.LogInformation("Downloading grammar model ({Mode})", have > 0 ? $"resuming at {have / (1024 * 1024)} MB" : "from the start");
 
             await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
@@ -188,13 +194,31 @@ public sealed class GrmrModelStore : IDisposable
         catch (Exception ex)
         {
             _logger.LogWarning("Grammar model download failed: {Reason}", ex.Message);
-            var message = ex is HttpRequestException or OperationCanceledException or IOException
-                ? "The download failed. Check your connection and try again."
-                : ex.Message;
-            lock (_gate) SetState(ModelState.Failed, 0, message);
+            bool blocked = IsBlocked(ex);
+            var message = blocked
+                ? "Your network blocked the download. AI grammar needs the model; the offline installer includes it."
+                : ex is HttpRequestException or OperationCanceledException or IOException
+                    ? "The download failed. Check your connection and try again."
+                    : ex.Message;
+            lock (_gate)
+            {
+                SetState(ModelState.Failed, 0, message);
+                Blocked = blocked;
+            }
             Changed?.Invoke();
         }
     }
+
+    /// <summary>A refusal by the network (HTTP 403/407/451, a proxy refusing the tunnel, a filter's web page).</summary>
+    internal static bool IsBlocked(Exception ex) => ex switch
+    {
+        BlockedDownloadException => true,
+        HttpRequestException { StatusCode: HttpStatusCode.Forbidden or HttpStatusCode.ProxyAuthenticationRequired or HttpStatusCode.UnavailableForLegalReasons } => true,
+        HttpRequestException h when h.Message.Contains("proxy", StringComparison.OrdinalIgnoreCase) => true,
+        _ => false,
+    };
+
+    private sealed class BlockedDownloadException(string message) : Exception(message);
 
     private void ReportProgress(double progress)
     {
@@ -208,6 +232,7 @@ public sealed class GrmrModelStore : IDisposable
     private void SetState(ModelState state, double progress, string? error)
     {
         State = state;
+        Blocked = false;
         Progress = progress;
         Error = error;
         Interlocked.Exchange(ref _lastReportedPercent, -1);

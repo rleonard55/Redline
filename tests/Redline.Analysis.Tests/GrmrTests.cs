@@ -308,6 +308,53 @@ public sealed class GrmrModelStoreTests : IDisposable
         Assert.False(File.Exists(store.ModelPath + ".partial"));
     }
 
+    /// <summary>Answers every request the same way, like a corporate web filter.</summary>
+    private sealed class FilterServer(HttpStatusCode status, string? html = null) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var response = new HttpResponseMessage(status);
+            if (html is not null) response.Content = new StringContent(html, Encoding.UTF8, "text/html");
+            return Task.FromResult(response);
+        }
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.ProxyAuthenticationRequired)]
+    public async Task BlockedByTheNetwork_FailsAsBlocked_AndInstallsNothing(HttpStatusCode status)
+    {
+        using var store = new GrmrModelStore(_dir, "test", handler: new FilterServer(status), file: Spec(Content));
+
+        Assert.Equal(ModelState.Failed, await Finished(store));
+        Assert.True(store.Blocked);
+        Assert.Contains("blocked", store.Error);
+        Assert.Null(store.InstalledPath);
+    }
+
+    [Fact]
+    public async Task FiltersBlockPage_IsNotSavedAsTheModel()
+    {
+        // Many filters answer 200 with their own page.
+        using var store = new GrmrModelStore(_dir, "test",
+            handler: new FilterServer(HttpStatusCode.OK, "<html><h1>Access denied</h1></html>"), file: Spec(Content));
+
+        Assert.Equal(ModelState.Failed, await Finished(store));
+        Assert.True(store.Blocked);
+        Assert.False(File.Exists(store.ModelPath));
+        Assert.False(File.Exists(store.ModelPath + ".partial"));
+    }
+
+    [Fact]
+    public async Task ServerError_FailsWithoutClaimingABlock()
+    {
+        using var store = new GrmrModelStore(_dir, "test", handler: new FilterServer(HttpStatusCode.InternalServerError), file: Spec(Content));
+
+        Assert.Equal(ModelState.Failed, await Finished(store));
+        Assert.False(store.Blocked);
+        Assert.Contains("connection", store.Error);
+    }
+
     [Fact]
     public async Task Remove_DeletesTheModel()
     {

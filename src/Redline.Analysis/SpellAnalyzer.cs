@@ -35,6 +35,7 @@ public sealed class SpellAnalyzer : ITextAnalyzer
 
     public string Name => "Spelling";
     public bool IsAvailable => _checker is not null;
+    public string? UnavailableReason { get; private set; }
     public string? LanguageTag { get; private set; }
 
     /// <summary>Language tags with an installed Windows spelling dictionary; empty if the API is unavailable.</summary>
@@ -72,10 +73,12 @@ public sealed class SpellAnalyzer : ITextAnalyzer
             }
 
             _logger.LogWarning("No supported spelling language found (requested {Language}); spelling disabled", language);
+            UnavailableReason = $"Windows has no spelling dictionary for {language} (Settings > Time & language > Language & region).";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Windows Spell Checking API unavailable; spelling disabled");
+            UnavailableReason = $"The Windows spell checker isn't available ({ex.GetType().Name}).";
         }
 
         return null;

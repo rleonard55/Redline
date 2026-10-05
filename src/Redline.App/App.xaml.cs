@@ -125,10 +125,33 @@ public partial class App : Application
             args.SetObserved();
         };
 
-        var tracker = _services.GetRequiredService<SurfaceTracker>();
-        var pipeline = _services.GetRequiredService<AnalysisPipeline>();
+        // A failure anywhere below used to leave Redline running in the tray but never checking text, with no
+        // message (OnStartup is async void and the dispatcher handler marks exceptions handled).
+        try
+        {
+            await StartAsync(e, log);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Startup failed");
+            MessageDialog.ShowError($"Redline couldn't start: {ex.Message}\n\nDetails are in the log folder:\n{log.LogDirectory}");
+            Shutdown(1);
+        }
+    }
 
-        var cache = _services.GetRequiredService<IssueCacheManager>();
+    /// <summary>
+    /// Everything after the services exist. Steps that only add extras (compatibility record, crash and GPU notices,
+    /// start-with-Windows sync) are <see cref="Optional"/>: if one fails, text checking still starts.
+    /// </summary>
+    private async Task StartAsync(StartupEventArgs e, DiagnosticsLog log)
+    {
+        var services = _services ?? throw new InvalidOperationException("Services aren't configured.");
+        var logger = _logger ?? throw new InvalidOperationException("Logging isn't configured.");
+
+        var tracker = services.GetRequiredService<SurfaceTracker>();
+        var pipeline = services.GetRequiredService<AnalysisPipeline>();
+
+        var cache = services.GetRequiredService<IssueCacheManager>();
         tracker.SnapshotChanged += (_, s) => pipeline.Submit(s.Surface, s.Snapshot);
         pipeline.AnalysisCompleted += (_, r) => cache.Update(r.Surface.SurfaceId, r.Issues);
         tracker.SurfaceChanged += (_, s) =>
@@ -138,32 +161,35 @@ public partial class App : Application
         };
 
         // Per-app compatibility record (local only; Settings > Compatibility). Identity and counts, never text.
-        var compatibility = _services.GetRequiredService<CompatibilityLog>();
-        tracker.SurfaceChanged += (_, s) =>
+        Optional("compatibility record", () =>
         {
-            if (s.Surface is { } surface && s.Capabilities is { } caps)
-                compatibility.Attached(surface, caps, AppVersionOf(surface.ProcessId));
-        };
-        tracker.SnapshotChanged += (_, s) => compatibility.TextRead(s.Surface, s.Snapshot.Length == 0);
-        tracker.SurfaceBlocked += (_, b) => compatibility.Blocked(b.ProcessName, b.ControlType, b.ClassName, b.FrameworkId, b.Reason);
-        _compatibilityTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMinutes(1) };
-        _compatibilityTimer.Tick += (_, _) => compatibility.Save();
-        _compatibilityTimer.Start();
+            var compatibility = services.GetRequiredService<CompatibilityLog>();
+            tracker.SurfaceChanged += (_, s) =>
+            {
+                if (s.Surface is { } surface && s.Capabilities is { } caps)
+                    compatibility.Attached(surface, caps, AppVersionOf(surface.ProcessId));
+            };
+            tracker.SnapshotChanged += (_, s) => compatibility.TextRead(s.Surface, s.Snapshot.Length == 0);
+            tracker.SurfaceBlocked += (_, b) => compatibility.Blocked(b.ProcessName, b.ControlType, b.ClassName, b.FrameworkId, b.Reason);
+            _compatibilityTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMinutes(1) };
+            _compatibilityTimer.Tick += (_, _) => compatibility.Save();
+            _compatibilityTimer.Start();
+        });
 
         // The grammar model works in the background; re-run analysis when it has new suggestions.
-        var grmr = _services.GetRequiredService<GrmrAnalyzer>();
+        var grmr = services.GetRequiredService<GrmrAnalyzer>();
         grmr.ResultsReady += pipeline.Refresh;
-        var models = _services.GetRequiredService<GrmrModelStore>();
+        var models = services.GetRequiredService<GrmrModelStore>();
         _modelState = models.State;
         models.Changed += () => Dispatcher.BeginInvoke(OnModelChanged);
 
         // Constructed now so it captures events from the start, even before the window opens.
-        _services.GetRequiredService<DiagnosticsViewModel>();
+        Optional("diagnostics", () => services.GetRequiredService<DiagnosticsViewModel>());
 
         foreach (var analyzer in pipeline.Analyzers)
-            _logger.LogInformation("Analyzer {Name}: {State}", analyzer.Name, analyzer.IsAvailable ? "available" : "unavailable");
+            logger.LogInformation("Analyzer {Name}: {State}", analyzer.Name, analyzer.IsAvailable ? "available" : "unavailable");
 
-        var settings = _services.GetRequiredService<SettingsStore>();
+        var settings = services.GetRequiredService<SettingsStore>();
         _tray = new TrayIconHost(
             () => ShowSettings(), ShowDiagnostics,
             () => settings.Update(st => st with { General = st.General with { Enabled = !st.General.Enabled } }),
@@ -171,22 +197,28 @@ public partial class App : Application
             () => _lastApp is { } app && !AppExclusion.IsExcluded(settings.Current, app.ProcessName) ? app.DisplayName : null,
             ExcludeLastApp);
 
-        var corrections = _services.GetRequiredService<CorrectionController>();
+        var corrections = services.GetRequiredService<CorrectionController>();
         corrections.Notify += (message, isError) => _tray.Notify(message, isError);
 
-        if (_services.GetRequiredService<GpuGuard>().CrashedLastTime)
+        Optional("GPU crash check", () =>
         {
-            _logger.LogWarning("The previous run ended while the grammar model was starting on the GPU; using the CPU");
-            _tray.Notify("Redline closed unexpectedly while starting the AI grammar model on the graphics card. It now runs on the processor (Settings > Writing).", true);
-        }
+            if (services.GetRequiredService<GpuGuard>().CrashedLastTime)
+            {
+                logger.LogWarning("The previous run ended while the grammar model was starting on the GPU; using the CPU");
+                _tray.Notify("Redline closed unexpectedly while starting the AI grammar model on the graphics card. It now runs on the processor (Settings > Writing).", true);
+            }
+        });
 
-        if (log.LogDirectory is { } logDir && CrashReport.TakePending(logDir) is { } report)
+        Optional("crash report check", () =>
         {
-            _logger.LogWarning("The previous run ended unexpectedly; crash report {Report}", System.IO.Path.GetFileName(report));
-            _tray.Notify("Redline closed unexpectedly last time. A crash report was saved in the logs folder.", true);
-        }
+            if (log.LogDirectory is { } logDir && CrashReport.TakePending(logDir) is { } report)
+            {
+                logger.LogWarning("The previous run ended unexpectedly; crash report {Report}", System.IO.Path.GetFileName(report));
+                _tray.Notify("Redline closed unexpectedly last time. A crash report was saved in the logs folder.", true);
+            }
+        });
 
-        var perf = _services.GetRequiredService<PerfCounters>();
+        var perf = services.GetRequiredService<PerfCounters>();
         pipeline.AnalysisCompleted += (_, r) =>
         {
             perf.Record("analysis", r.Duration);
@@ -196,7 +228,7 @@ public partial class App : Application
         _perfTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = PerfSummaryInterval };
         _perfTimer.Tick += (_, _) => LogPerfSummary();
 
-        _updates = _services.GetRequiredService<UpdateService>();
+        _updates = services.GetRequiredService<UpdateService>();
         _updates.Changed += () => Dispatcher.BeginInvoke(OnUpdateChanged);
         _updateTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = FirstUpdateCheck };
         _updateTimer.Tick += (_, _) =>
@@ -206,7 +238,7 @@ public partial class App : Application
         };
 
         // Ctrl+Alt+. (the default) echoes the familiar Ctrl+. "quick fix" without shadowing it in VS Code/Office.
-        _hotkeys = new HotkeyManager(() => _ = corrections.ShowForCaretAsync(), _logger);
+        _hotkeys = new HotkeyManager(() => _ = corrections.ShowForCaretAsync(), logger);
         _hotkeys.ActiveChanged += active =>
         {
             HotkeyName = active?.ToString();
@@ -216,11 +248,11 @@ public partial class App : Application
         if (_hotkeys.RegisterConfigured(configuredHotkey) is { } hotkeyProblem)
             _tray.Notify(hotkeyProblem, _hotkeys.Active is null);
 
-        SyncStartWithWindows(settings);
+        Optional("start-with-Windows sync", () => SyncStartWithWindows(settings));
         ApplySettings(null, settings.Current);
         settings.Changed += (old, updated) => Dispatcher.BeginInvoke(() => ApplySettings(old, updated));
 
-        var overlay = _services.GetRequiredService<OverlayManager>();
+        var overlay = services.GetRequiredService<OverlayManager>();
         overlay.ApplyRequested += issue => _ = corrections.ApplyFirstSuggestionAsync(issue);
         overlay.MoreRequested += issue => _ = corrections.ShowForIssueAsync(issue);
         overlay.ParagraphFixRequested += request => _ = corrections.ShowParagraphFixAsync(request.Paragraph, request.SnapshotVersion, request.Anchor);
@@ -229,11 +261,12 @@ public partial class App : Application
         try
         {
             await tracker.StartAsync();
-            _logger.LogInformation("Redline started");
+            logger.LogInformation("Redline started");
+            ReportUnavailableChecking(pipeline);
         }
         catch (Exception ex)
         {
-            _logger.LogCritical(ex, "Failed to start focus tracking");
+            logger.LogCritical(ex, "Failed to start focus tracking");
             MessageDialog.ShowError($"Redline could not start focus tracking:\n{ex.Message}");
         }
 
@@ -242,6 +275,38 @@ public partial class App : Application
         if (e.Args.Contains("--settings", StringComparer.OrdinalIgnoreCase))
             ShowSettings();
         ShowWelcomeIfFirstRun(e.Args.Contains("--welcome", StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Runs a startup step that Redline can do without; a failure is logged and startup continues.</summary>
+    private void Optional(string step, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Startup step failed, continuing without it: {Step}", step);
+        }
+    }
+
+    /// <summary>
+    /// Spelling and the built-in grammar engine can be missing on locked-down PCs (no spelling dictionary for the
+    /// language, a policy blocking the native grammar DLL). Say so instead of silently showing no underlines.
+    /// The AI grammar model is optional and reported separately (download state).
+    /// </summary>
+    private void ReportUnavailableChecking(AnalysisPipeline pipeline)
+    {
+        var core = pipeline.Analyzers.Where(a => a is not GrmrAnalyzer).ToList();
+        var missing = core.Where(a => !a.IsAvailable).ToList();
+        if (missing.Count == 0) return;
+
+        var reasons = string.Join(" ", missing.Select(a => a.UnavailableReason ?? $"{a.Name} checking couldn't start."));
+        var working = core.Where(a => a.IsAvailable).Select(a => a.Name == "Spelling" ? "spelling" : "grammar").ToList();
+        _logger?.LogWarning("Checking unavailable: {Analyzers}", string.Join(", ", missing.Select(a => a.Name)));
+        _tray?.Notify(working.Count == 0
+            ? $"Redline can't check text on this PC. {reasons}"
+            : $"{reasons} Redline still checks {string.Join(" and ", working)}.", true);
     }
 
     /// <summary>
@@ -557,7 +622,10 @@ public partial class App : Application
         }
         else if (_modelState == ModelState.Failed)
         {
-            _tray.Notify("The AI grammar model couldn't be downloaded. Try again from Settings > Writing.", true);
+            // The model is optional: say that everything else keeps working.
+            _tray.Notify(models.Blocked
+                ? "Your network blocked the AI grammar model download. Spelling and grammar checking still work; for AI grammar, use Redline's offline installer."
+                : "The AI grammar model couldn't be downloaded. Spelling and grammar checking still work; try again from Settings > Writing.", true);
         }
     }
 
