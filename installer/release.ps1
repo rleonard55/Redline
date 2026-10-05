@@ -1,8 +1,9 @@
 # Publishes a GitHub release that the in-app updater picks up: tag vX.Y.Z with Redline-X.Y.Z-x64.msi
 # (plus the third-party notices). The version is <Version> in Directory.Build.props; bump and commit it first.
-# Usage: powershell -ExecutionPolicy Bypass -File installer/release.ps1 [-Draft] [-Notes "text"]
+# Usage: powershell -ExecutionPolicy Bypass -File installer/release.ps1 [-Draft] [-Notes "text" | -NotesFile notes.md]
+# Prefer -NotesFile: notes passed as text through "powershell -File" are cut at the first double quote (v0.9.0).
 # Needs: gh (signed in), cargo, cargo-about, .NET 9 SDK.
-param([switch]$Draft, [string]$Notes)
+param([switch]$Draft, [string]$Notes, [string]$NotesFile)
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
@@ -32,11 +33,14 @@ try {
     $releaseArgs = @($tag, $msi, $notices, '--title', "Redline $version", '--verify-tag')
     # Notes go through a file: PowerShell 5.1 doesn't escape embedded double quotes in native arguments,
     # so --notes "...like "She go"..." reached gh cut off at the first quote (v0.7.0's notes).
-    $notesFile = $null
-    if ($Notes) {
-        $notesFile = Join-Path ([IO.Path]::GetTempPath()) "redline-notes-$version.md"
-        [IO.File]::WriteAllText($notesFile, $Notes, (New-Object Text.UTF8Encoding($false)))
-        $releaseArgs += @('--notes-file', $notesFile)
+    $tempNotes = $null
+    if ($NotesFile) {
+        if (-not (Test-Path $NotesFile)) { throw "Notes file $NotesFile not found." }
+        $releaseArgs += @('--notes-file', (Resolve-Path $NotesFile).Path)
+    } elseif ($Notes) {
+        $tempNotes = Join-Path ([IO.Path]::GetTempPath()) "redline-notes-$version.md"
+        [IO.File]::WriteAllText($tempNotes, $Notes, (New-Object Text.UTF8Encoding($false)))
+        $releaseArgs += @('--notes-file', $tempNotes)
     } else { $releaseArgs += '--generate-notes' }
     if ($Draft) { $releaseArgs += '--draft' }
     gh release create @releaseArgs
@@ -45,8 +49,8 @@ try {
     # The updater trusts GitHub's asset digest; make sure it matches what was built here.
     $digest = gh release view $tag --json assets --jq ".assets[] | select(.name == \`"Redline-$version-x64.msi\`") | .digest"
     if ($digest -ne "sha256:$sha") { throw "Uploaded MSI digest '$digest' doesn't match the local build (sha256:$sha)." }
-    if ($notesFile) {
-        Remove-Item $notesFile -ErrorAction SilentlyContinue
+    if ($tempNotes) {
+        Remove-Item $tempNotes -ErrorAction SilentlyContinue
         [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
         $body = (gh release view $tag --json body --jq '.body' | Out-String).Trim()
         if (($body -replace "`r", '') -ne ($Notes.Trim() -replace "`r", '')) {

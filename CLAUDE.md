@@ -95,7 +95,7 @@ list of app quirks and how each is handled. Read both before changing behavior.
   Installed copies download `Redline-X.Y.Z-x64.msi` to `%LOCALAPPDATA%\Redline\updates`, verify size + SHA-256
   against GitHub's asset `digest` (no digest = refuse), then tray item + one notification per version; install
   = `msiexec /i … /passive` (MSI exits us via --exit and relaunches). Build-folder copies only link to the release.
-- Releases: bump `<Version>` in Directory.Build.props, commit, push, then `installer/release.ps1` (clean+pushed
+- Releases: bump `<Version>` in Directory.Build.props, commit, push, then `installer/release.ps1 -NotesFile notes.md` (clean+pushed
   main, tag vX.Y.Z, build, `gh release create` with MSI + notices, verifies the uploaded digest). Ask the user
   before publishing a release — it is public and every installed copy will offer it.
 - Third-party notices: `installer/make-notices.ps1` (run by build.ps1) writes THIRD-PARTY-NOTICES.txt into the
