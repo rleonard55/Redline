@@ -109,10 +109,15 @@ $timer.Add_Tick({
         if ([M]::GetForegroundWindow() -ne $form.Handle) { Abort "form not in front before click"; return }
         if (-not [M]::Over($pills[0], $x, $y)) { Abort "pointer not over the pill"; return }
         [M]::Click(); $script:step++ }
-    3 { if ([M]::ForegroundPid() -ne [uint32]$redline.Id) { Abort "no fix popup after the click"; return }
+    3 { if ([M]::ForegroundPid() -ne [uint32]$redline.Id) {
+          $fg = Get-Process -Id ([M]::ForegroundPid()) -ErrorAction SilentlyContinue
+          Shot "2_no_popup"; Abort "no fix popup after the click (foreground: $($fg.ProcessName))"; return }
         Shot "2_fix_popup"; [M]::Tap(0x0D); $script:step++ }   # Enter
     4 { if (++$script:waits -ge 3) { $script:waits = 0; $script:step++ } }  # typing, verification, re-analysis
-    5 { $lines = $tb.Text -split "`r`n"; $pills = Pills; Shot "3_after"
+    5 { # Sample for 3 s: a pill that blinks out between layouts would show up here.
+        $counts = @(); for ($k = 0; $k -lt 30; $k++) { $counts += (Pills).Count; Start-Sleep -Milliseconds 100 }
+        $script:results += "pill count over 3 s (every 100 ms): " + (($counts | Group-Object | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join ", ")
+        $lines = $tb.Text -split "`r`n"; $pills = Pills; Shot "3_after"
         $script:results += "paragraph 1 -> " + $lines[0]
         $script:results += "paragraphs 2 and 3 untouched: " + ($lines[1] -eq $p2 -and $lines[2] -eq $p3)
         $script:results += "form in front after apply: " + ([M]::GetForegroundWindow() -eq $form.Handle)

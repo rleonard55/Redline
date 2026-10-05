@@ -155,8 +155,9 @@ public sealed class CorrectionController
         {
             var adapter = _tracker.CurrentAdapter;
             var text = _document.Current?.Text;
-            if (adapter is null || text is null || _document.Current!.Version != version ||
-                _cache.Get(adapter.Context.SurfaceId, version) is not { } issues)
+            // A pill kept while typing can be clicked just before that text's analysis lands: wait for it briefly.
+            var issues = adapter is null ? null : await WaitForCurrentIssuesAsync(adapter.Context.SurfaceId);
+            if (adapter is null || text is null || issues is null || _document.Current?.Version != version || issues.SnapshotVersion != version)
             {
                 Notify?.Invoke("That paragraph is out of date — the text or focus changed.", false);
                 return;

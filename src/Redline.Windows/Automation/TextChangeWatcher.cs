@@ -18,7 +18,7 @@ namespace Redline.Windows.Automation;
 /// </remarks>
 public sealed class TextChangeWatcher : IDisposable
 {
-    private static readonly TimeSpan FastPoll = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan FastPoll = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan SlowPoll = TimeSpan.FromSeconds(5);
 
     private readonly UiaDispatcher _uia;

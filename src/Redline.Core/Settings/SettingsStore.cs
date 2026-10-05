@@ -70,22 +70,24 @@ public sealed class SettingsStore
     {
         if (_path is null || !File.Exists(_path))
         {
-            var defaults = new RedlineSettings().Validated();
+            var defaults = RedlineSettings.CreateDefault().Validated();
             if (_path is not null) Save(defaults); // give users a file to look at
             return defaults;
         }
 
         try
         {
-            var loaded = JsonSerializer.Deserialize<RedlineSettings>(File.ReadAllText(_path), Json) ?? new RedlineSettings();
-            return loaded.Validated();
+            var loaded = JsonSerializer.Deserialize<RedlineSettings>(File.ReadAllText(_path), Json) ?? RedlineSettings.CreateDefault();
+            var migrated = loaded.Migrated().Validated();
+            if (migrated.Revision != loaded.Revision) Save(migrated); // once: the next start reads it as current
+            return migrated;
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
             var aside = _path + ".bad";
             _logger.LogWarning("settings.json is not valid ({Reason}); moved to {Aside} and using defaults", ex.Message, Path.GetFileName(aside));
             try { File.Move(_path, aside, overwrite: true); } catch (IOException) { }
-            var defaults = new RedlineSettings().Validated();
+            var defaults = RedlineSettings.CreateDefault().Validated();
             Save(defaults);
             return defaults;
         }

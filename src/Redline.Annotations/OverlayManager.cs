@@ -67,6 +67,12 @@ public sealed class OverlayManager : IDisposable
     private readonly List<GutterPill> _gutterPills = new();
     private bool _gutterEnabled = true;
 
+    // Paragraphs that had a pill at the last analysis (start offset, kept up to date with edits), so a pill doesn't
+    // vanish while the user types in its paragraph and come back after re-analysis. _issuesFresh: _issues come
+    // straight from analysis (not shifted for an edit since).
+    private List<(int Anchor, int Changes, IssueCategory Category)> _sticky = new();
+    private bool _issuesFresh;
+
     // Scroll detection: one drawn word's range and where it was when last drawn.
     private (TextRange Range, TextBounds Rect)? _anchor;
     private bool _scrolling;
@@ -149,6 +155,7 @@ public sealed class OverlayManager : IDisposable
         _hover.Clear(disarm: true);
         _scrolling = false;
         _issues = null;
+        _sticky = new();
         _adapter = e.Surface is null ? null : _tracker.CurrentAdapter;
         _root = IntPtr.Zero;
         _windowEvents.Track(IntPtr.Zero);
@@ -162,7 +169,10 @@ public sealed class OverlayManager : IDisposable
 
         // Issues for this surface may already be cached from earlier in the session.
         if (_cache.Get(adapter.Context.SurfaceId, _document.Current?.Version) is { } cached)
+        {
             _issues = cached;
+            _issuesFresh = true;
+        }
         RequestLayout();
     }
 
@@ -170,6 +180,7 @@ public sealed class OverlayManager : IDisposable
     {
         if (_adapter?.Context.SurfaceId != e.SurfaceId) return;
         _issues = e.Issues;
+        _issuesFresh = true;
         _anchor = null; // offsets changed; the next layout picks a new anchor
         RequestLayout();
     }
@@ -182,9 +193,11 @@ public sealed class OverlayManager : IDisposable
 
         // Shift squiggles to follow the edit right away instead of blanking them all until the
         // re-analysis lands. Anything touching the edit is dropped: that word is being changed.
+        _issuesFresh = false;
         if (e.Change is not { } c)
         {
             _issues = null;
+            _sticky = new();
         }
         else
         {
@@ -195,6 +208,7 @@ public sealed class OverlayManager : IDisposable
                 .Select(i => i with { SnapshotVersion = e.Snapshot.Version })
                 .ToList();
             _issues = new IssueSet(kept, e.Snapshot.Version);
+            _sticky = _sticky.Select(p => p with { Anchor = ShiftAnchor(p.Anchor, c) }).ToList();
         }
         RequestLayout();
     }
@@ -294,7 +308,7 @@ public sealed class OverlayManager : IDisposable
             .Take(MaxIssuesDrawn)
             .ToList();
         // Paragraphs worth a gutter pill are measured in the same round trip as the squiggles.
-        var paragraphs = _gutterEnabled ? ParagraphsToOffer(snapshot.Text, issues) : [];
+        var paragraphs = _gutterEnabled ? ParagraphsToOffer(snapshot.Text, issues, _issuesFresh) : [];
         var measured = await adapter.GetBoundsAsync(drawn.Select(i => i.Range).Concat(paragraphs.Select(p => p.Range)).ToList(), snapshot.Text);
         var bounds = measured.Take(drawn.Count).ToList();
         var paragraphBounds = measured.Skip(drawn.Count).ToList();
@@ -352,7 +366,19 @@ public sealed class OverlayManager : IDisposable
     /// <summary>Detects scrolling: re-measures the anchor word and hides squiggles while it moves.</summary>
     private async void CheckAnchor()
     {
-        if (_anchor is not { } anchor || _anchorCheckRunning || _layoutRunning || _moving) return;
+        if (_anchorCheckRunning || _layoutRunning || _moving) return;
+        if (_anchor is not { } anchor)
+        {
+            // The text changed (or new issues arrived) while squiggles were hidden for scrolling, which drops the
+            // anchor. Without one this check can never see the text hold still, and layout skips itself while
+            // scrolling, so nothing would ever bring the squiggles back: lay out again, which picks a new anchor.
+            if (_scrolling)
+            {
+                _scrolling = false;
+                RequestLayout();
+            }
+            return;
+        }
 
         // Only measure while the target is in front, like the layout pass. Besides being pointless
         // otherwise, querying a Win32 edit's text geometry through UIA pulls focus back to it — which
@@ -399,10 +425,14 @@ public sealed class OverlayManager : IDisposable
         }
     }
 
-    /// <summary>Paragraphs holding at least <see cref="GutterMinChanges"/> fixes, with the count and most severe category.</summary>
-    private static List<(TextRange Range, int Changes, IssueCategory Category)> ParagraphsToOffer(string text, IssueSet issues)
+    /// <summary>
+    /// Paragraphs holding at least <see cref="GutterMinChanges"/> fixes, with the count and most severe category.
+    /// After fresh analysis that's the new set of sticky paragraphs; between an edit and the next analysis the
+    /// sticky ones stay too (typing drops the edited word's issue, which can take a paragraph below the minimum).
+    /// </summary>
+    private List<(TextRange Range, int Changes, IssueCategory Category)> ParagraphsToOffer(string text, IssueSet issues, bool fresh)
     {
-        var result = new List<(TextRange, int, IssueCategory)>();
+        var result = new List<(TextRange Range, int Changes, IssueCategory Category)>();
         foreach (var range in issues.Issues.Select(i => CompositeFix.ParagraphAt(text, i.StartOffset)).Distinct())
         {
             var fix = CompositeFix.Build(text, issues.SnapshotVersion, issues.Issues, range, FixScope.Paragraph);
@@ -410,7 +440,28 @@ public sealed class OverlayManager : IDisposable
             result.Add((range, fix.Edits.Count, fix.Edits.Select(e => e.Category).MinBy(CategoryPriority)));
             if (result.Count == MaxGutterPills) break;
         }
+
+        if (fresh)
+        {
+            _sticky = result.Select(p => (p.Range.Start, p.Changes, p.Category)).ToList();
+            return result;
+        }
+        foreach (var (anchor, changes, category) in _sticky)
+        {
+            if (result.Count == MaxGutterPills) break;
+            var range = CompositeFix.ParagraphAt(text, Math.Clamp(anchor, 0, text.Length));
+            if (range.Length > 0 && !result.Any(p => p.Range.IntersectsWith(range)))
+                result.Add((range, changes, category));
+        }
         return result;
+    }
+
+    /// <summary>Moves a paragraph's start offset across an edit: shifted by edits before it, kept for edits after.</summary>
+    internal static int ShiftAnchor(int anchor, TextChange change)
+    {
+        int oldEnd = change.Start + change.OldLength;
+        if (oldEnd <= anchor) return anchor + change.Delta;
+        return change.Start < anchor ? change.Start : anchor; // the edit swallowed the start: begin where it did
     }
 
     private void ShowGutter(TextBounds surface, List<(TextRange Range, int Changes, IssueCategory Category)> paragraphs,

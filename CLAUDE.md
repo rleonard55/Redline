@@ -227,6 +227,18 @@ list of app quirks and how each is handled. Read both before changing behavior.
   2026-10-05** at the window edge and indented. Once (indented) the popup was dismissed before Enter ("0 edits
   chosen" = it lost activation); the rerun passed - watch for it. Don't run these while the user is typing: a run
   during the user's ChatGPT session never attached to the form (Redline stayed on ChatGPT).
+- **Sticky pills** (OverlayManager `_sticky`, `ShiftAnchor`): paragraphs that had a pill at the last analysis keep
+  it, at their start offset shifted across edits, until fresh analysis says otherwise (typing drops the edited
+  word's issue and used to blink the pill out until re-analysis). Clicking one just before analysis lands waits
+  for it (`ShowParagraphFixAsync` uses `WaitForCurrentIssuesAsync`).
+- **Latency (2026-10-05):** default analysis delay 300 -> **150 ms** (`GeneralSettings.DefaultDelayMs`); settings
+  files got `revision` (`RedlineSettings.Migrated`, CurrentRevision 1): an older file still at 300 moves to 150
+  once, a chosen value is kept. `TextChangeWatcher.FastPoll` 1 s -> 500 ms (apps without UIA change events).
+  Typical keystroke-pause -> pill ~0.2-0.35 s (debounce + ~6-80 ms analysis + ~5 ms layout).
+- **Fixed (pre-existing):** squiggles could stay hidden for good after a fix: the anchor check had flagged
+  "scrolling", then the edit/new issues cleared `_anchor`, so `CheckAnchor` returned early and layout skipped
+  itself while scrolling. Now a scrolling state without an anchor re-lays out. Found by
+  `redline_gutter_e2e.ps1`, which now samples the pill count for 3 s after the fix (6/6 steady after the fix).
 
 ### Phase gaps closed (2026-10-04, after the plan review)
 - **Overlay on DPI change:** `OverlayWindow.ShowAt` re-applies its exact rectangle if `WM_DPICHANGED` (sent during

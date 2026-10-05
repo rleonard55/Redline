@@ -8,13 +8,37 @@ public sealed record RedlineSettings
     public ApplicationSettings Applications { get; init; } = new();
     public AiSettings Ai { get; init; } = new();
 
+    /// <summary>
+    /// Which one-time migrations a file has had (<see cref="CurrentRevision"/>). Files from before it existed read
+    /// as 0, which is why the default here is 0 and new files are created with <see cref="CurrentRevision"/>.
+    /// </summary>
+    public int Revision { get; init; }
+
+    /// <summary>1: the analysis delay default went from 300 to 150 ms.</summary>
+    public const int CurrentRevision = 1;
+
+    /// <summary>Defaults for a new settings file.</summary>
+    public static RedlineSettings CreateDefault() => new() { Revision = CurrentRevision };
+
+    /// <summary>
+    /// One-time changes for files written by older versions: values still at an old default move to the new one
+    /// (a value the user chose is kept).
+    /// </summary>
+    public RedlineSettings Migrated()
+    {
+        var s = this;
+        if (s.Revision < 1 && s.General?.AnalysisDelayMs == 300)
+            s = s with { General = s.General with { AnalysisDelayMs = GeneralSettings.DefaultDelayMs } };
+        return s.Revision >= CurrentRevision ? s : s with { Revision = CurrentRevision };
+    }
+
     /// <summary>Clamps out-of-range values and fills gaps so a hand-edited file can't break Redline.</summary>
     public RedlineSettings Validated() => this with
     {
         General = (General ?? new()) with
         {
             Language = string.IsNullOrWhiteSpace(General?.Language) ? "en-US" : General.Language.Trim(),
-            AnalysisDelayMs = Math.Clamp(General?.AnalysisDelayMs ?? 300, GeneralSettings.MinDelayMs, GeneralSettings.MaxDelayMs),
+            AnalysisDelayMs = Math.Clamp(General?.AnalysisDelayMs ?? GeneralSettings.DefaultDelayMs, GeneralSettings.MinDelayMs, GeneralSettings.MaxDelayMs),
             Hotkey = Hotkey.TryParse(General?.Hotkey, out var hk) ? hk.ToString() : GeneralSettings.DefaultHotkey,
         },
         Writing = Writing ?? new(),
@@ -43,6 +67,7 @@ public sealed record GeneralSettings
 {
     public const int MinDelayMs = 100;
     public const int MaxDelayMs = 2000;
+    public const int DefaultDelayMs = 150;
     public const string DefaultHotkey = "Ctrl+Alt+.";
 
     /// <summary>
@@ -58,7 +83,7 @@ public sealed record GeneralSettings
     public string Language { get; init; } = "en-US";
 
     /// <summary>Quiet period after typing before analysis runs.</summary>
-    public int AnalysisDelayMs { get; init; } = 300;
+    public int AnalysisDelayMs { get; init; } = DefaultDelayMs;
 
     public string Hotkey { get; init; } = DefaultHotkey;
 

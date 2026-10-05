@@ -10,7 +10,7 @@ namespace Redline.Core.Pipeline;
 public sealed record AnalysisPipelineOptions
 {
     /// <summary>Quiet period after the last submitted snapshot before analysis starts.</summary>
-    public TimeSpan Debounce { get; init; } = TimeSpan.FromMilliseconds(300);
+    public TimeSpan Debounce { get; init; } = TimeSpan.FromMilliseconds(150);
 
     /// <summary>Documents up to this length are re-analyzed in full on every change; larger ones incrementally by paragraph.</summary>
     public int FullAnalysisMaxChars { get; init; } = 20_000;

@@ -57,7 +57,8 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.False(store.Current.Writing.StyleSuggestions);
         Assert.Equal("Ctrl+Alt+.", store.Current.General.Hotkey);
         Assert.True(store.Current.General.HoverSuggestions);
-        Assert.Contains("\"analysisDelayMs\": 300", File.ReadAllText(FilePath));
+        Assert.Contains("\"analysisDelayMs\": 150", File.ReadAllText(FilePath));
+        Assert.Contains("\"revision\": 1", File.ReadAllText(FilePath));
     }
 
     [Fact]
@@ -147,6 +148,23 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal("Ctrl+Alt+.", c.General.Hotkey);
         Assert.True(c.General.HoverSuggestions); // settings added later default on in older files
         Assert.True(c.General.ParagraphGutter);
+    }
+
+    [Theory]
+    [InlineData(null, 300, 150)]  // older file still at the old default: moves to the new one
+    [InlineData(null, 500, 500)]  // a delay the user chose is kept
+    [InlineData(1, 300, 300)]     // already migrated: 300 is now the user's choice
+    public void OlderFiles_MoveFromTheOldDefaultDelay_Once(int? revision, int delay, int expected)
+    {
+        Directory.CreateDirectory(_dir);
+        var revisionJson = revision is null ? "" : $"\"revision\": {revision},";
+        File.WriteAllText(FilePath, "{ " + revisionJson + " \"general\": { \"analysisDelayMs\": " + delay + " } }");
+
+        var c = new SettingsStore(FilePath).Current;
+
+        Assert.Equal(expected, c.General.AnalysisDelayMs);
+        Assert.Equal(RedlineSettings.CurrentRevision, c.Revision);
+        Assert.Equal(expected, new SettingsStore(FilePath).Current.General.AnalysisDelayMs); // saved, not re-migrated
     }
 
     public void Dispose()

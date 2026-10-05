@@ -137,3 +137,17 @@ public class OverlaySmokeTests
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 }
+
+public class GutterStickyTests
+{
+    [Theory]
+    [InlineData(10, 2, 0, 3, 13)]   // typed before the paragraph: shifted
+    [InlineData(10, 10, 0, 3, 13)]  // typed at its start: still the same paragraph
+    [InlineData(10, 15, 0, 3, 10)]  // typed inside it: unchanged
+    [InlineData(10, 4, 2, 0, 8)]    // deleted before it: shifted back
+    [InlineData(10, 8, 5, 0, 8)]    // deletion swallowed the start: begins where the deletion did
+    public void ShiftAnchor_FollowsEdits(int anchor, int start, int oldLength, int newLength, int expected)
+    {
+        Assert.Equal(expected, Redline.Annotations.OverlayManager.ShiftAnchor(anchor, new Redline.Core.Models.TextChange(start, oldLength, newLength)));
+    }
+}
