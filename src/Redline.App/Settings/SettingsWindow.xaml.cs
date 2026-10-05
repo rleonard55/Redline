@@ -357,6 +357,13 @@ public partial class SettingsWindow : Window
         });
     }
 
+    /// <summary>Brings a tab to the front by its header ("Apps", "Writing", ...).</summary>
+    public void ShowTab(string header)
+    {
+        if (Tabs.Items.OfType<TabItem>().FirstOrDefault(t => Equals(t.Header, header)) is { } tab)
+            tab.IsSelected = true;
+    }
+
     private void ShowAiDevice() => AiDeviceHint.Text = _aiDeviceStatus();
 
     // ---- Compatibility ----

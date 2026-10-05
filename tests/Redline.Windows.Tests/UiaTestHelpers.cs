@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
+using Redline.Windows.Automation;
 
 namespace Redline.Windows.Tests;
 
@@ -19,6 +20,27 @@ internal static class UiaTestHelpers
                 return AutomationElement.FromHandle(hwnd);
             }
             catch (COMException) when (attempt < 10)
+            {
+                Thread.Sleep(200);
+            }
+        }
+    }
+
+    /// <summary>
+    /// <see cref="FromHandle"/> plus <see cref="ElementInfo.Capture"/>, retried as a whole: under load (the full
+    /// test run, parallel test classes) reading a brand-new window's properties can also fail once with
+    /// ElementNotAvailableException. Call on the UIA thread.
+    /// </summary>
+    public static (AutomationElement Element, ElementInfo Info) Capture(IntPtr hwnd)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                var element = FromHandle(hwnd);
+                return (element, ElementInfo.Capture(element));
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or COMException && attempt < 10)
             {
                 Thread.Sleep(200);
             }

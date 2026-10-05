@@ -30,8 +30,10 @@ public sealed class Win32EditGeometryTests : IDisposable
         _uiThread = new Thread(() =>
         {
             _threadId = GetCurrentThreadId();
-            _edit = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, "Edit", Text,
-                WS_POPUP | WS_BORDER | ES_MULTILINE, 60, 60, 600, 200, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            // Topmost and below UiaIntegrationTests' window (50,50 500x200; test classes run in parallel):
+            // text rectangles of a covered word can come back clipped.
+            _edit = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, "Edit", Text,
+                WS_POPUP | WS_BORDER | ES_MULTILINE, 60, 300, 600, 200, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
             _font = CreateFontW(-FontPixels, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI");
             SendMessageW(_edit, WM_SETFONT, _font, (IntPtr)1);
             ShowWindow(_edit, SW_SHOWNOACTIVATE);
@@ -53,8 +55,7 @@ public sealed class Win32EditGeometryTests : IDisposable
     [Fact]
     public async Task MultilineEdit_RectanglesSpanTheWholeLine()
     {
-        var element = await _uia.InvokeAsync(() => UiaTestHelpers.FromHandle(_edit));
-        var info = await _uia.InvokeAsync(() => ElementInfo.Capture(element));
+        var (element, info) = await _uia.InvokeAsync(() => UiaTestHelpers.Capture(_edit));
         Assert.Equal("Win32", info.FrameworkId);
         using var adapter = await _uia.InvokeAsync(() => new GenericUiaAdapter(_uia, element, info));
 
@@ -86,7 +87,7 @@ public sealed class Win32EditGeometryTests : IDisposable
     }
 
     private const uint WS_POPUP = 0x80000000, WS_BORDER = 0x00800000, ES_MULTILINE = 0x0004;
-    private const uint WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x00000080;
+    private const uint WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x00000080, WS_EX_TOPMOST = 0x00000008;
     private const int SW_SHOWNOACTIVATE = 4;
     private const uint WM_SETFONT = 0x0030, WM_QUIT = 0x0012, EM_POSFROMCHAR = 0x00D6;
 

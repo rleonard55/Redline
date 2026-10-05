@@ -108,6 +108,17 @@ public sealed class SurfaceTracker : IDisposable
         }
     }
 
+    /// <summary>
+    /// Drops the current surface and evaluates the focused element again, e.g. after the exclusion list
+    /// changed (an attached surface otherwise isn't re-checked while it keeps focus).
+    /// </summary>
+    public void Reevaluate()
+    {
+        if (_paused) return;
+        _ = _uia.InvokeAsync(() => Detach("Settings changed"));
+        Schedule("settings", () => AutomationElement.FocusedElement);
+    }
+
     /// <summary>Queues evaluation of the element produced by <paramref name="getElement"/> (run on the UIA thread).</summary>
     private void Schedule(string source, Func<AutomationElement?> getElement)
     {

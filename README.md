@@ -55,7 +55,9 @@ on your CPU.
 
 Download `Redline-<version>-x64.msi` from [Releases](../../releases) and run it. It installs for the
 current user only (no admin rights needed), starts Redline, and sets it to start when you sign in.
-Redline lives in the system tray; right-click the icon for Settings, Pause and Exit.
+A short welcome window explains the basics on the first start. Redline lives in the system tray; right-click
+the icon for Settings, Pause, Exit, or *Don't check in &lt;app&gt;* to stop checking in the app you were just using
+(undo it in Settings > Apps).
 
 The installer isn't code-signed yet, so Windows SmartScreen may warn about it
 (**More info → Run anyway**).

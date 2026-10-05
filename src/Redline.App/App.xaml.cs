@@ -134,6 +134,7 @@ public partial class App : Application
         tracker.SurfaceChanged += (_, s) =>
         {
             if (s.Surface is null) pipeline.Clear();
+            else _lastApp = new LastApp(s.Surface.ProcessName, AppDisplayNameOf(s.Surface.ProcessId, s.Surface.ProcessName));
         };
 
         // Per-app compatibility record (local only; Settings > Compatibility). Identity and counts, never text.
@@ -164,9 +165,11 @@ public partial class App : Application
 
         var settings = _services.GetRequiredService<SettingsStore>();
         _tray = new TrayIconHost(
-            ShowSettings, ShowDiagnostics,
+            () => ShowSettings(), ShowDiagnostics,
             () => settings.Update(st => st with { General = st.General with { Enabled = !st.General.Enabled } }),
-            Shutdown);
+            Shutdown,
+            () => _lastApp is { } app && !AppExclusion.IsExcluded(settings.Current, app.ProcessName) ? app.DisplayName : null,
+            ExcludeLastApp);
 
         var corrections = _services.GetRequiredService<CorrectionController>();
         corrections.Notify += (message, isError) => _tray.Notify(message, isError);
@@ -237,6 +240,58 @@ public partial class App : Application
             ShowDiagnostics();
         if (e.Args.Contains("--settings", StringComparer.OrdinalIgnoreCase))
             ShowSettings();
+        ShowWelcomeIfFirstRun(e.Args.Contains("--welcome", StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The welcome window, once, on the first start of a fresh install (or always with --welcome). Upgrades
+    /// from versions without it (a settings file already existed) only record it as seen.
+    /// </summary>
+    private void ShowWelcomeIfFirstRun(bool force)
+    {
+        var settings = _services!.GetRequiredService<SettingsStore>();
+        if (!force && settings.Current.General.WelcomeShown) return;
+        settings.Update(s => s with { General = s.General with { WelcomeShown = true } });
+        if (!force && !settings.IsNew) return;
+
+        var s = settings.Current;
+        new WelcomeWindow(HotkeyName, s.General.HoverSuggestions, s.Writing.AiGrammar,
+            turnOnAiGrammar: () => settings.Update(st => st with { Writing = st.Writing with { AiGrammar = true } }),
+            openSettings: () => ShowSettings()).Show();
+    }
+
+    /// <summary>The app Redline last attached to (for the tray's "Don't check in ..."). No text, just the process.</summary>
+    private sealed record LastApp(string ProcessName, string DisplayName);
+
+    private volatile LastApp? _lastApp;
+    private readonly Dictionary<string, string> _appDisplayNames = new(StringComparer.OrdinalIgnoreCase);
+
+    private string AppDisplayNameOf(int processId, string processName)
+    {
+        lock (_appDisplayNames)
+        {
+            if (_appDisplayNames.TryGetValue(processName, out var cached)) return cached;
+            string? description = null;
+            try
+            {
+                using var p = Process.GetProcessById(processId);
+                description = p.MainModule?.FileVersionInfo.FileDescription;
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // Exited, or elevated (no access to its modules): fall back to the process name.
+            }
+            return _appDisplayNames[processName] = AppExclusion.DisplayName(processName, description);
+        }
+    }
+
+    private void ExcludeLastApp()
+    {
+        if (_lastApp is not { } app || _services is null) return;
+        _services.GetRequiredService<SettingsStore>().Update(s => AppExclusion.Exclude(s, app.ProcessName));
+        _logger?.LogInformation("Excluded {Process} from the tray", app.ProcessName);
+        _tray?.Notify($"Redline won't check {app.DisplayName} anymore. Click here to undo it in Settings > Apps.",
+            onClick: () => ShowSettings("Apps"));
     }
 
     /// <summary>Applies settings at startup (<paramref name="old"/> null) and after each change. UI thread.</summary>
@@ -255,6 +310,8 @@ public partial class App : Application
         ApplyAiGrammar(old, s);
         _services.GetRequiredService<AnalysisPipeline>().Debounce = TimeSpan.FromMilliseconds(s.General.AnalysisDelayMs);
         _services.GetRequiredService<SecurityFilter>().SetUserExclusions(s.Applications.Excluded);
+        if (old is not null && !old.Applications.Excluded.SequenceEqual(s.Applications.Excluded, StringComparer.OrdinalIgnoreCase))
+            _services.GetRequiredService<SurfaceTracker>().Reevaluate(); // the current app may be excluded now
         _services.GetRequiredService<OverlayManager>().HoverEnabled = s.General.HoverSuggestions;
 
         if (_log is not null) _log.FileLevel = s.General.DiagnosticsMode ? LogLevel.Debug : LogLevel.Information;
@@ -568,7 +625,7 @@ public partial class App : Application
         }
     }
 
-    private void ShowSettings()
+    private void ShowSettings(string? tab = null)
     {
         if (_services is null || _hotkeys is null) return;
 
@@ -593,6 +650,7 @@ public partial class App : Application
         {
             _settingsWindow.Activate();
         }
+        if (tab is not null) _settingsWindow.ShowTab(tab);
     }
 
     /// <summary>Settings > Writing: where the AI grammar model runs, or will run.</summary>

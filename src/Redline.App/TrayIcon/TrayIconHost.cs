@@ -18,13 +18,20 @@ public sealed class TrayIconHost : IDisposable
     private readonly Icon _pausedIcon;
 
     /// <param name="togglePause">Asked to flip the paused state; the app answers via <see cref="SetPaused"/>.</param>
-    public TrayIconHost(Action showSettings, Action showDiagnostics, Action togglePause, Action exit)
+    /// <param name="lastApp">Name of the app Redline last checked, if it can still be excluded (asked as the menu opens).</param>
+    /// <param name="excludeLastApp">Stops checking that app.</param>
+    public TrayIconHost(Action showSettings, Action showDiagnostics, Action togglePause, Action exit,
+        Func<string?> lastApp, Action excludeLastApp)
     {
         _activeIcon = CreateIcon(Color.FromArgb(0xD1, 0x24, 0x24));
         _pausedIcon = CreateIcon(Color.Gray);
 
         _pauseItem = new Forms.ToolStripMenuItem("Pause");
         _pauseItem.Click += (_, _) => togglePause();
+
+        // Opening the menu moves focus to the taskbar, so "this app" is the one Redline last checked.
+        var appItem = new Forms.ToolStripMenuItem { Visible = false };
+        appItem.Click += (_, _) => excludeLastApp();
 
         _updateItem = new Forms.ToolStripMenuItem { Visible = false, Font = new Font(Forms.Control.DefaultFont, FontStyle.Bold) };
         _updateItem.Click += (_, _) => _updateClick?.Invoke();
@@ -34,6 +41,7 @@ public sealed class TrayIconHost : IDisposable
         menu.Items.Add("Settings…", null, (_, _) => showSettings());
         menu.Items.Add("Diagnostics", null, (_, _) => showDiagnostics());
         menu.Items.Add(_pauseItem);
+        menu.Items.Add(appItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => exit());
         menu.ShowImageMargin = false;
@@ -41,7 +49,13 @@ public sealed class TrayIconHost : IDisposable
         foreach (Forms.ToolStripItem item in menu.Items)
             if (item is Forms.ToolStripMenuItem) item.Padding = new Forms.Padding(0, 3, 0, 3);
         // Follow the Windows light/dark app mode, checked each time the menu opens.
-        menu.Opening += (_, _) => TrayMenuRenderer.Apply(menu, SystemTheme.IsDark);
+        menu.Opening += (_, _) =>
+        {
+            var name = lastApp();
+            appItem.Visible = name is not null;
+            appItem.Text = name is null ? string.Empty : "Don't check in " + name.Replace("&", "&&");
+            TrayMenuRenderer.Apply(menu, SystemTheme.IsDark);
+        };
         menu.Opened += (_, _) => TrayMenuRenderer.RoundCorners(menu);
 
         _icon = new Forms.NotifyIcon

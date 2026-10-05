@@ -31,6 +31,17 @@ list of app quirks and how each is handled. Read both before changing behavior.
   Dictionary tab: *Import…* adds words from Word custom dictionaries (`%APPDATA%\Microsoft\UProof\*.DIC`, UTF-16)
   or any word list (`Core/Corrections/WordListFile`; `IPersonalDictionary.AddRange` saves once). The Windows user
   dictionary (`%APPDATA%\Microsoft\Spelling`) needs no import: the Windows spell checker already honors it.
+  `ShowTab("Apps")` selects a tab (`App.ShowSettings(tab)`).
+- **Welcome** (`App/WelcomeWindow`, code-only, Fluent): once, on the first start of a *fresh install*
+  (`SettingsStore.IsNew` = no settings.json before this run); upgrades just set `General.WelcomeShown`. Tips (hover,
+  hotkey from `App.HotkeyName` in bold, tray), an AI grammar offer while it's off, Open Settings / Get started.
+  `Redline.exe --welcome` always shows it (startup-only argument, like --settings/--diagnostics).
+- **Tray "Don't check in <app>"**: opening the menu moves focus to the taskbar, so it names the app Redline *last
+  attached to* (`App._lastApp`, from `SurfaceChanged`; display name = exe FileDescription, else process name —
+  `Core/Settings/AppExclusion`); hidden when there's none or it's already excluded. Adds "<name>.exe" to
+  `Applications.Excluded`, balloon "click to undo" opens Settings > Apps. Any change to the exclusion list calls
+  `SurfaceTracker.Reevaluate()` (detach + re-check focus): an attached surface skips the security check otherwise.
+  Live-checked 2026-10-04 (11/11, scratch script): welcome + AI offer, exclusion saved, form no longer attached.
 - **Hover quick fix** (`Annotations/HoverController` + `HoverPill`, geometry in `Core/Geometry/HoverLayout`):
   resting the pointer on a squiggle for 300 ms shows a pill under the word: [● top suggestion | ⋯].
   Suggestion → `CorrectionController.ApplyFirstSuggestionAsync` (engine-verified); ⋯ → the full popup.

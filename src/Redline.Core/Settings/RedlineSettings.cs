@@ -68,6 +68,9 @@ public sealed record GeneralSettings
     /// <summary>Daily check of GitHub Releases for a newer version (installing always needs a click).</summary>
     public bool CheckForUpdates { get; init; } = true;
 
+    /// <summary>The first-run welcome was shown (or skipped because this install predates it).</summary>
+    public bool WelcomeShown { get; init; } = false;
+
     /// <summary>Detailed (debug-level) log files and periodic timing summaries. Still never document text.</summary>
     public bool DiagnosticsMode { get; init; } = false;
 }

@@ -24,7 +24,7 @@
             <Button Content="Close" Width="80" IsCancel="True" Click="Close_Click" />
         </StackPanel>
 
-        <TabControl TabStripPlacement="Left">
+        <TabControl x:Name="Tabs" TabStripPlacement="Left">
             <TabItem Header="General">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="12">

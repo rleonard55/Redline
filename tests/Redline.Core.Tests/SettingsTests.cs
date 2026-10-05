@@ -61,6 +61,20 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void IsNew_OnlyWhenNoFileExisted()
+    {
+        var first = new SettingsStore(FilePath);
+        Assert.True(first.IsNew);
+        Assert.False(first.Current.General.WelcomeShown);
+        first.Update(s => s with { General = s.General with { WelcomeShown = true } });
+
+        var second = new SettingsStore(FilePath);
+        Assert.False(second.IsNew);
+        Assert.True(second.Current.General.WelcomeShown);
+        Assert.False(new SettingsStore(null).IsNew);
+    }
+
+    [Fact]
     public void Update_PersistsAndNotifies()
     {
         var store = new SettingsStore(FilePath);
@@ -179,5 +193,29 @@ public class SettingsEffectTests
             cache.Get("s")!.Issues.Select(i => i.Category));
 
         Assert.True(published >= 3);
+    }
+}
+
+public class AppExclusionTests
+{
+    [Theory]
+    [InlineData("WINWORD.EXE", "Microsoft Word", "Microsoft Word")]
+    [InlineData("chrome.exe", "Google Chrome", "Google Chrome")]
+    [InlineData("Notepad.exe", "Notepad.exe", "Notepad")]     // description is just the file name
+    [InlineData("ms-teams.exe", null, "ms-teams")]              // no access to the exe (elevated)
+    [InlineData("app.exe", "   ", "app")]
+    public void DisplayName_PrefersTheFileDescription(string process, string? description, string expected) =>
+        Assert.Equal(expected, AppExclusion.DisplayName(process, description));
+
+    [Fact]
+    public void Exclude_AddsOnce_AndIsExcludedMatchesAnyCase()
+    {
+        var s = new RedlineSettings().Validated();
+        Assert.False(AppExclusion.IsExcluded(s, "WINWORD.EXE"));
+
+        s = AppExclusion.Exclude(s, "WINWORD.EXE").Validated();
+        s = AppExclusion.Exclude(s, "winword.exe").Validated();
+        Assert.Equal(["WINWORD.EXE"], s.Applications.Excluded);
+        Assert.True(AppExclusion.IsExcluded(s, "winword"));
     }
 }

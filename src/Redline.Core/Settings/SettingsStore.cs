@@ -32,8 +32,12 @@ public sealed class SettingsStore
     {
         _path = path;
         _logger = logger ?? NullLogger<SettingsStore>.Instance;
+        IsNew = path is not null && !File.Exists(path);
         _current = Load();
     }
+
+    /// <summary>No settings file existed before this run: a fresh install (not an upgrade).</summary>
+    public bool IsNew { get; }
 
     public static string DefaultPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Redline", "settings.json");
