@@ -20,8 +20,13 @@
            Language="1033">
 
     <!-- Same-version upgrades: the offline and regular MSIs of one version replace each other instead of
-         installing side by side. -->
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Redline is already installed." AllowSameVersionUpgrades="yes" />
+         installing side by side.
+         afterInstallExecute: the old version is removed only after the new one is fully installed, so a cancelled
+         or failed upgrade rolls back to the old version intact. (afterInstallValidate removed it first; a cancel
+         during an upgrade on 2026-10-05 left no Redline installed at all.) Shared files survive the removal because
+         their components keep the same GUIDs across versions (WiX derives them from the install paths). -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Redline is already installed." AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallExecute" />
 <?ifdef ModelDir?>
     <!-- The model is already compressed (quantized weights): store it as is, in its own cabinet. -->
     <Media Id="1" Cabinet="app.cab" EmbedCab="yes" CompressionLevel="high" />
@@ -124,7 +129,15 @@
     </Component>
 
     <CustomAction Id="LaunchRedline" FileRef="RedlineExe" ExeCommand="" Return="asyncNoWait" Impersonate="yes" />
+<?ifdef FailTest?>
+    <!-- Test builds only (-p:FailTest=1): fail after the files are copied, to check that the rollback leaves the
+         previously installed version intact. Never in a shipped MSI. -->
+    <CustomAction Id="TestFailure" Error="Redline test build: failing on purpose after InstallFiles." />
+<?endif?>
     <InstallExecuteSequence>
+<?ifdef FailTest?>
+      <Custom Action="TestFailure" After="InstallFiles" Condition="NOT REMOVE" />
+<?endif?>
       <Custom Action="ExitRunningRedline" Before="InstallValidate" Condition="Installed OR WIX_UPGRADE_DETECTED" />
       <Custom Action="LaunchRedline" After="InstallFinalize" Condition="LAUNCHAPP = 1 AND NOT Installed AND NOT REMOVE" />
     </InstallExecuteSequence>

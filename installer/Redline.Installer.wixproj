@@ -8,6 +8,8 @@
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\publish\</PublishDir>
     <DefineConstants>ProductVersion=$(Version);PublishDir=$(PublishDir);RepoRoot=$(MSBuildThisFileDirectory)..\</DefineConstants>
     <DefineConstants Condition="'$(ModelDir)' != ''">$(DefineConstants);ModelDir=$(ModelDir);LicenseRtf=$(LicenseRtf)</DefineConstants>
+    <!-- Upgrade-rollback tests only: an MSI that fails on purpose after copying files (see Package.wxs). -->
+    <DefineConstants Condition="'$(FailTest)' != ''">$(DefineConstants);FailTest=1</DefineConstants>
     <!-- Per-user install into %LOCALAPPDATA%\Programs: file key paths and profile folders are intended.
          ICE69: the shortcut and Run value point at Redline.exe from other components of the same feature. -->
     <!-- ICE61: same-version upgrades are intended (offline and regular MSIs of one version replace each other). -->

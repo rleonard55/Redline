@@ -85,6 +85,35 @@ list of app quirks and how each is handled. Read both before changing behavior.
   upgrade with startup turned off (stays off), uninstall while running (8 s, everything removed). Not tested: the
   interactive (non-/qn) install, which has no wizard UI — just the progress dialog.
 
+### Installer: offline variant and safe upgrades (2026-10-05)
+- `build.ps1 -Offline [-ModelPath x.gguf]` -> `Redline-X.Y.Z-x64-offline.msi` (~840 MB): the app + the GRMR-V3 model
+  (size/SHA-256 checked against the pins parsed from `GrmrModelStore.cs`; source = -ModelPath, else this machine's
+  downloaded copy, else the pinned URL), installed to `%LOCALAPPDATA%\Redline\models` (where the app already looks)
+  as **Permanent** components, so regular upgrades and uninstall leave it like other user data. Model in its own
+  uncompressed cab. `release.ps1 -WithOffline` uploads it too; the updater regex only takes `...-x64.msi`.
+  v0.9.0 has it (uploaded 2026-10-05, built from afd8558, app source identical to the tag).
+- Licensing: GRMR is Apache-2.0 but a Gemma 3 derivative; Gemma Terms 3.1 require the use restrictions in an
+  agreement, a copy of the terms, and a NOTICE with "Gemma is provided under and subject to the Gemma Terms of Use
+  found at ai.google.dev/gemma/terms". So the offline MSI (only) has WixUI_Minimal with a license RTF (MIT, Gemma
+  Terms, Prohibited Use Policy, Apache-2.0) and installs NOTICE + terms next to the model; `make-notices.ps1
+  -ModelIncluded`. Texts in `installer/licenses` (fetched 2026-10-05 from ai.google.dev). Silent installs skip the
+  dialog (normal MSI behaviour).
+- `MajorUpgrade`: `AllowSameVersionUpgrades` (offline and regular MSI of one version replace each other) and
+  **`Schedule="afterInstallExecute"`** (since 2026-10-05, first shipped in 0.9.1): the old version is removed only
+  after the new one is installed. With the old `afterInstallValidate`, an upgrade cancelled mid-way left NO Redline
+  installed. Verified with a test build that fails after InstallFiles (`-p:FailTest=1`, rebuild with
+  `--no-incremental`: WiX doesn't notice a changed define): 0.9.0 stayed intact (1603); good upgrade, same-version
+  reinstall and a byte-for-byte compare of all 293 installed files vs the publish output all passed. Skipped
+  ("Won't Overwrite") files were identical; a third-party DLL whose content changes without a version bump would
+  be the one thing left stale.
+- Gotchas: in PowerShell `'a' + $x + 'b', 'c'` is `'a' + $x + ('b','c')` (comma binds tighter): parenthesize list
+  items that concatenate. PowerShell variable names are case-insensitive (`$NotesFile` == `$notesFile`).
+  WixUI_Minimal defines ARPNOMODIFY itself.
+- **Never open an interactive installer UI on the user's machine while anything else may be driving the desktop.**
+  2026-10-05: twice, something else (not Claude's script) ticked "I accept" + Install within ~2 s of the license
+  page appearing (LicenseAccepted in the verbose log); Claude's Cancel then landed mid-upgrade and, with the old
+  schedule, the user was left without Redline (reinstalled from the verified 0.9.0 asset). Test with `/qn` + `/l*v`.
+
 ### Phase 5 — public repo, auto-update, notices (done)
 - Public repo: https://github.com/rleonard55/Redline (MIT). History was rewritten (2026-10-04) to the noreply
   author `8695387+rleonard55@users.noreply.github.com`, which is set as this repo's `user.email`; never commit
