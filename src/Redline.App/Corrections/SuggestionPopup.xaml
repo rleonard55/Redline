@@ -52,6 +52,10 @@
             <TextBlock x:Name="NoSuggestions" Margin="10,2,10,4" Foreground="{DynamicResource Flyout.MutedText}" FontStyle="Italic"
                        Text="No suggestions" Visibility="Collapsed" />
 
+            <Button x:Name="FixMoreButton" Style="{StaticResource ItemButton}" Click="FixMore_Click" Visibility="Collapsed">
+                <TextBlock><Run x:Name="FixMoreText" /><Run Text="   F" Foreground="{DynamicResource Flyout.MutedText}" /></TextBlock>
+            </Button>
+
             <Separator Margin="6,4" Background="{DynamicResource Flyout.Divider}" />
             <Button x:Name="AddToDictionaryButton" Style="{StaticResource ItemButton}" Click="AddToDictionary_Click">
                 <TextBlock><Run Text="Add to dictionary" /><Run Text="   D" Foreground="{DynamicResource Flyout.MutedText}" /></TextBlock>

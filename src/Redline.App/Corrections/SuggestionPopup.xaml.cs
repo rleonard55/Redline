@@ -1,22 +1,21 @@
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
 using Redline.Annotations;
 using Redline.Core.Models;
 
 namespace Redline.App.Corrections;
 
-public enum PopupChoiceKind { Cancel, Suggestion, AddToDictionary, Ignore, IgnoreRule }
+public enum PopupChoiceKind { Cancel, Suggestion, AddToDictionary, Ignore, IgnoreRule, FixMore }
 
 public readonly record struct PopupChoice(PopupChoiceKind Kind, string? Replacement = null);
 
 /// <summary>
 /// Shows one issue with its suggestions next to the flagged text. Keyboard: 1-9 / Enter apply a
-/// suggestion, D adds to dictionary, I ignores, R ignores the rule, Esc or clicking away cancels.
+/// suggestion, D adds to dictionary, I ignores, R ignores the rule, F opens the paragraph fix (when offered),
+/// Esc or clicking away cancels.
 /// The popup takes focus while open; the replacement engine moves focus back to the target.
 /// </summary>
 public partial class SuggestionPopup : Window
@@ -26,11 +25,12 @@ public partial class SuggestionPopup : Window
     private readonly List<Button> _suggestionButtons = new();
     private bool _wasActivated;
 
-    public SuggestionPopup(TextIssue issue)
+    /// <param name="fixMoreLabel">Label for the "fix the whole paragraph" item, or null to leave it out.</param>
+    public SuggestionPopup(TextIssue issue, string? fixMoreLabel = null)
     {
         InitializeComponent();
         _issue = issue;
-        ApplyPalette(SystemTheme.Current);
+        FlyoutWindow.ApplyPalette(Resources, SystemTheme.Current);
 
         CategoryText.Text = issue.Category.ToString();
         CategoryBadge.Background = new SolidColorBrush(CategoryColor(issue.Category));
@@ -58,6 +58,11 @@ public partial class SuggestionPopup : Window
         AddToDictionaryButton.Visibility = issue.Category == IssueCategory.Spelling && issue.RuleId != "Spelling:RepeatedWord"
             ? Visibility.Visible : Visibility.Collapsed;
         IgnoreRuleButton.Visibility = issue.Category == IssueCategory.Spelling ? Visibility.Collapsed : Visibility.Visible;
+        if (fixMoreLabel is not null)
+        {
+            FixMoreText.Text = fixMoreLabel;
+            FixMoreButton.Visibility = Visibility.Visible;
+        }
 
         PreviewKeyDown += OnPreviewKeyDown;
 
@@ -85,7 +90,7 @@ public partial class SuggestionPopup : Window
         {
             // Defensive: if an external window on the dispatcher has a transient layout conflict, don't abort
         }
-        Place(anchor);
+        FlyoutWindow.Place(this, anchor);
         Activate();
         (_suggestionButtons.FirstOrDefault() ?? (UIElement)AddToDictionaryButton).Focus();
 
@@ -105,41 +110,6 @@ public partial class SuggestionPopup : Window
         return _choice.Task;
     }
 
-    private void Place(TextBounds? anchor)
-    {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        var dpi = VisualTreeHelper.GetDpi(this);
-        int width = (int)Math.Ceiling((ActualWidth > 0 ? ActualWidth : MinWidth) * dpi.DpiScaleX);
-        int height = (int)Math.Ceiling((ActualHeight > 0 ? ActualHeight : 100) * dpi.DpiScaleY);
-        int margin = (int)(8 * dpi.DpiScaleX); // the Border's shadow margin
-
-        int x, y, anchorTop;
-        if (anchor is { } a)
-        {
-            x = (int)a.Left - margin;
-            y = (int)a.Bottom + 2 - margin;
-            anchorTop = (int)a.Top;
-        }
-        else
-        {
-            GetCursorPos(out var p);
-            (x, y, anchorTop) = (p.X, p.Y + 16, p.Y);
-        }
-
-        // Keep it on the monitor that holds the anchor; flip above the text if there's no room below.
-        var monitor = MonitorFromPoint(new POINT { X = x + margin, Y = anchorTop }, MONITOR_DEFAULTTONEAREST);
-        var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-        if (GetMonitorInfo(monitor, ref info))
-        {
-            var work = info.rcWork;
-            if (y + height > work.Bottom) y = anchorTop - height + margin - 2;
-            x = Math.Clamp(x, work.Left, Math.Max(work.Left, work.Right - width));
-            y = Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - height));
-        }
-
-        SetWindowPos(hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
-    }
-
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
         int digit = e.Key is >= Key.D1 and <= Key.D9 ? e.Key - Key.D1
@@ -155,6 +125,8 @@ public partial class SuggestionPopup : Window
             Complete(new PopupChoice(PopupChoiceKind.Ignore));
         else if (e.Key == Key.R && IgnoreRuleButton.IsVisible)
             Complete(new PopupChoice(PopupChoiceKind.IgnoreRule));
+        else if (e.Key == Key.F && FixMoreButton.IsVisible)
+            Complete(new PopupChoice(PopupChoiceKind.FixMore));
         else
             return; // let Tab/arrows/Enter/Space drive the focused button
         e.Handled = true;
@@ -163,23 +135,12 @@ public partial class SuggestionPopup : Window
     private void AddToDictionary_Click(object sender, RoutedEventArgs e) => Complete(new PopupChoice(PopupChoiceKind.AddToDictionary));
     private void Ignore_Click(object sender, RoutedEventArgs e) => Complete(new PopupChoice(PopupChoiceKind.Ignore));
     private void IgnoreRule_Click(object sender, RoutedEventArgs e) => Complete(new PopupChoice(PopupChoiceKind.IgnoreRule));
+    private void FixMore_Click(object sender, RoutedEventArgs e) => Complete(new PopupChoice(PopupChoiceKind.FixMore));
 
     private void Complete(PopupChoice choice)
     {
         if (!_choice.TrySetResult(choice)) return;
         Close();
-    }
-
-    private void ApplyPalette(FlyoutPalette palette)
-    {
-        Resources["Flyout.Background"] = palette.Background;
-        Resources["Flyout.Border"] = palette.Border;
-        Resources["Flyout.Divider"] = palette.Divider;
-        Resources["Flyout.Text"] = palette.Text;
-        Resources["Flyout.SecondaryText"] = palette.SecondaryText;
-        Resources["Flyout.MutedText"] = palette.MutedText;
-        Resources["Flyout.Hover"] = palette.Hover;
-        Resources["Flyout.KeyboardFocus"] = palette.KeyboardFocus;
     }
 
     private static Color CategoryColor(IssueCategory category) => category switch
@@ -190,19 +151,4 @@ public partial class SuggestionPopup : Window
         IssueCategory.Punctuation => Color.FromRgb(0x6B, 0x3F, 0xA0),
         _ => Color.FromRgb(0x55, 0x55, 0x55),
     };
-
-    private static readonly IntPtr HWND_TOPMOST = new(-1);
-    private const uint SWP_NOSIZE = 0x0001;
-    private const uint SWP_NOACTIVATE = 0x0010;
-    private const uint MONITOR_DEFAULTTONEAREST = 2;
-
-    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X; public int Y; }
-    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
-
-    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
-    [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
-    [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
-    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 }

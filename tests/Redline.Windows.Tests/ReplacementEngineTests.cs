@@ -150,6 +150,62 @@ public sealed class ReplacementEngineTests : IDisposable
         Assert.Equal("First line\r\nSecond line here\r\nThird", await BoxText());
     }
 
+    private static FixEdit EditAt(TextSnapshot snapshot, string word, string replacement, int occurrence = 0)
+    {
+        var issue = IssueAt(snapshot, word, occurrence);
+        var range = replacement.Length == 0 ? CorrectionMath.ExpandDeletion(snapshot.Text, issue.Range) : issue.Range;
+        return new FixEdit(range, snapshot.Text.Substring(range.Start, range.Length), replacement, IssueCategory.Spelling, "test");
+    }
+
+    [InteractiveFact]
+    public async Task Batch_AppliesEveryEdit_BackToFront()
+    {
+        var (adapter, snapshot) = await PrepareAsync("This is an tset.\r\nShe go home, the the end.");
+        FixEdit[] edits =
+        [
+            EditAt(snapshot, "an", "a"),
+            EditAt(snapshot, "tset", "test"),
+            EditAt(snapshot, "go", "goes"),
+            EditAt(snapshot, "the", "", occurrence: 1),
+        ];
+
+        var result = await Engine().ApplyBatchAsync(adapter, snapshot.Version, edits);
+
+        Assert.True(result.Succeeded, result.Last.ToString());
+        Assert.Equal(4, result.Applied);
+        Assert.Equal("This is a test.\r\nShe goes home, the end.", await BoxText());
+    }
+
+    [InteractiveFact]
+    public async Task Batch_TextEditedSinceAnalysis_IsRejected_AndNothingChanges()
+    {
+        var (adapter, snapshot) = await PrepareAsync("This is an tset.");
+        var edits = new[] { EditAt(snapshot, "an", "a"), EditAt(snapshot, "tset", "test") };
+        await _wpf.InvokeAsync(() => _textBox.AppendText("!"));
+
+        var result = await Engine().ApplyBatchAsync(adapter, snapshot.Version, edits);
+
+        Assert.Equal(0, result.Applied);
+        Assert.Equal(CorrectionOutcome.Rejected, result.Last.Outcome);
+        Assert.Equal("This is an tset.!", await BoxText());
+    }
+
+    [InteractiveFact]
+    public async Task Batch_OverlappingEdits_AreRejected()
+    {
+        var (adapter, snapshot) = await PrepareAsync("I has went.");
+        var edits = new[]
+        {
+            new FixEdit(new TextRange(2, 8), "has went", "had gone", IssueCategory.Grammar, "test"),
+            EditAt(snapshot, "went", "gone"),
+        };
+
+        var result = await Engine().ApplyBatchAsync(adapter, snapshot.Version, edits);
+
+        Assert.Equal(0, result.Applied);
+        Assert.Equal("I has went.", await BoxText());
+    }
+
     [InteractiveFact]
     public async Task StaleIssue_IsRejected_AndNothingChanges()
     {

@@ -18,13 +18,25 @@ public static class RewriteDiff
     /// <summary>Changed word characters / all word characters above this = a rewrite.</summary>
     public const double MaxChangedFraction = 0.5;
 
+    /// <summary>Loose diff: dropping more than one word, or this fraction of a long sentence, = lost content.</summary>
+    public const double MaxDroppedWordFraction = 0.15;
+
     /// <summary>
     /// Word-level edits that turn <paramref name="original"/> into <paramref name="corrected"/>, or
     /// none when they are identical, the output is empty, or the change is too large to be a
     /// correction. Whitespace-only edits and a sentence-final period the original didn't have are
     /// dropped. Insertions are attached to the neighbouring word so every edit has a range to underline.
     /// </summary>
-    public static IReadOnlyList<RewriteEdit> Compute(string original, string? corrected)
+    public static IReadOnlyList<RewriteEdit> Compute(string original, string? corrected) => Compute(original, corrected, strict: true);
+
+    /// <summary>
+    /// Like <see cref="Compute(string, string?)"/> without the edit-count and changed-fraction limits (and a
+    /// wider length ratio): the model's whole-sentence answer, for a fix the user previews before applying.
+    /// Never used for underlines.
+    /// </summary>
+    public static IReadOnlyList<RewriteEdit> ComputeLoose(string original, string? corrected) => Compute(original, corrected, strict: false);
+
+    private static IReadOnlyList<RewriteEdit> Compute(string original, string? corrected, bool strict)
     {
         if (string.IsNullOrWhiteSpace(corrected) || string.IsNullOrWhiteSpace(original))
             return [];
@@ -32,7 +44,7 @@ public static class RewriteDiff
         if (string.Equals(original, corrected, StringComparison.Ordinal))
             return [];
         double ratio = (double)corrected.Length / original.Length;
-        if (ratio < 0.6 || ratio > 1.6)
+        if (strict ? ratio < 0.6 || ratio > 1.6 : ratio < 0.5 || ratio > 2.0)
             return [];
 
         var a = Tokenize(original);
@@ -54,7 +66,16 @@ public static class RewriteDiff
             edits.Add(ToEdit(a, aStart, aEnd, inserted));
         }
 
-        if (edits.Count == 0 || edits.Count > MaxEdits)
+        if (edits.Count == 0)
+            return [];
+        if (!strict)
+        {
+            // Corrections rarely drop more than a word ("the the"); the model sometimes deletes one it can't
+            // read ("This is an tset of the new feature." -> "This is a new feature.").
+            int words = CountWords(a), dropped = words - CountWords(b);
+            return dropped > Math.Max(1, (int)(words * MaxDroppedWordFraction)) ? [] : Merge(edits);
+        }
+        if (edits.Count > MaxEdits)
             return [];
         int wordChars = original.Count(char.IsLetterOrDigit);
         if (wordChars == 0 || (double)changedWordChars / wordChars > MaxChangedFraction)
@@ -105,6 +126,8 @@ public static class RewriteDiff
         }
         return merged;
     }
+
+    private static int CountWords(List<Token> tokens) => tokens.Count(t => t.Text.Length > 0 && IsWordChar(t.Text[0]));
 
     private static bool IsTerminalPunctuation(string s) => s.Length > 0 && s.All(c => c is '.' or '!' or '?');
 

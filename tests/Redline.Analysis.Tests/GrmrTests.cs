@@ -119,6 +119,41 @@ public sealed class GrmrAnalyzerTests : IDisposable
     }
 
     [Fact]
+    public async Task SentenceAlternatives_IncludeAnswersTooBigForUnderlines()
+    {
+        const string messy = "i has went too the stor yesterday an buyed sum food";
+        _corrector.Answers[messy] = "I had gone to the store yesterday and bought some food.";
+        _corrector.Answers["She go."] = "She goes.";
+        var text = "Fine here. " + messy + "\nShe go.";
+
+        var answers = await _analyzer.GetSentenceAlternativesAsync(text, new TextRange(0, text.Length), TimeSpan.FromSeconds(5), default);
+
+        Assert.Equal([11, text.Length - 7], answers.Select(a => a.Sentence.Start));
+        Assert.True(answers[0].Edits.Count > 6);
+        // Underlines still come from the strict diff only.
+        var issues = await _analyzer.AnalyzeAsync(Request(text), default);
+        Assert.Equal(["go"], issues.Select(i => i.OriginalText));
+    }
+
+    [Fact]
+    public async Task SentenceAlternatives_JumpTheQueue_AndGiveUpAfterTheWait()
+    {
+        _corrector.Hold = new SemaphoreSlim(0);
+        await _analyzer.AnalyzeAsync(Request("One here. Two here. Three here. Four here."), default);
+        await WaitUntil(() => _corrector.Seen.Count == 1); // "One here." is in progress
+
+        var none = await _analyzer.GetSentenceAlternativesAsync("Z go.", new TextRange(0, 5), TimeSpan.FromMilliseconds(100), default);
+        Assert.Empty(none); // still pending: the popup shows what it has
+
+        _corrector.Answers["Z go."] = "Z goes.";
+        _corrector.Hold.Release(10);
+        var answers = await _analyzer.GetSentenceAlternativesAsync("Z go.", new TextRange(0, 5), TimeSpan.FromSeconds(5), default);
+
+        Assert.Single(answers);
+        Assert.Equal("Z go.", _corrector.Seen.ElementAt(1));
+    }
+
+    [Fact]
     public async Task UnchangedSentences_DoNotRaiseResultsReady()
     {
         int raised = 0;

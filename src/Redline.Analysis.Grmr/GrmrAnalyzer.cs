@@ -30,9 +30,10 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
     private readonly TimeSpan _idleUnload;
 
     private readonly object _gate = new();
-    private readonly Dictionary<string, LinkedListNode<(string Sentence, IReadOnlyList<RewriteEdit> Edits)>> _cache = new(StringComparer.Ordinal);
-    private readonly LinkedList<(string Sentence, IReadOnlyList<RewriteEdit> Edits)> _lru = new(); // most recent last
+    private readonly Dictionary<string, LinkedListNode<CacheEntry>> _cache = new(StringComparer.Ordinal);
+    private readonly LinkedList<CacheEntry> _lru = new(); // most recent last
     private List<string> _queue = new();                                 // guarded by _gate
+    private List<string> _priority = new();                              // guarded by _gate; asked for by a fix popup, done first
     private HashSet<string> _lastRequested = new(StringComparer.Ordinal); // guarded by _gate
 
     private readonly SemaphoreSlim _signal = new(0);
@@ -42,6 +43,10 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
     private Task? _worker;
     private volatile bool _enabled;
     private volatile bool _failed;
+
+    /// <param name="Edits">Small edits, shown as underlines (<see cref="RewriteDiff.Compute(string, string?)"/>).</param>
+    /// <param name="Whole">The model's whole answer as edits (<see cref="RewriteDiff.ComputeLoose"/>), for previewed fixes only.</param>
+    private sealed record CacheEntry(string Sentence, IReadOnlyList<RewriteEdit> Edits, IReadOnlyList<RewriteEdit> Whole);
 
     /// <param name="modelPath">The verified model path, or null while it isn't installed.</param>
     /// <param name="createCorrector">Loads the model (slow; called on the worker thread).</param>
@@ -66,7 +71,7 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
         {
             _enabled = value;
             if (value) return;
-            lock (_gate) _queue = new();
+            lock (_gate) { _queue = new(); _priority = new(); }
             _ = ReleaseModelAsync();
         }
     }
@@ -123,6 +128,52 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
             _signal.Release();
         }
         return Task.FromResult<IReadOnlyList<TextIssue>>(issues);
+    }
+
+    /// <summary>
+    /// The model's whole-sentence answer for each sentence of <paramref name="text"/> inside <paramref name="scope"/>
+    /// that it would change (edits relative to the sentence). Sentences it hasn't seen jump the queue; waits up to
+    /// <paramref name="wait"/> for them and leaves out the ones still pending.
+    /// </summary>
+    public async Task<IReadOnlyList<(TextRange Sentence, IReadOnlyList<RewriteEdit> Edits)>> GetSentenceAlternativesAsync(
+        string text, TextRange scope, TimeSpan wait, CancellationToken ct)
+    {
+        if (!IsAvailable) return [];
+        var sentences = SentenceSplitter.Split(text)
+            .Where(r => r.Start >= scope.Start && r.End <= scope.End && r.Length <= MaxSentenceChars)
+            .Select(r => (Range: r, Text: text.Substring(r.Start, r.Length)))
+            .ToList();
+
+        lock (_gate)
+        {
+            var missing = sentences.Select(x => x.Text).Where(t => !_cache.ContainsKey(t)).Distinct(StringComparer.Ordinal).ToList();
+            if (missing.Count > 0)
+            {
+                _priority = missing;
+                EnsureWorker();
+                _signal.Release();
+            }
+        }
+
+        var deadline = DateTime.UtcNow + wait;
+        while (true)
+        {
+            bool done;
+            lock (_gate) done = sentences.All(x => _cache.ContainsKey(x.Text));
+            if (done || DateTime.UtcNow >= deadline || !IsAvailable) break;
+            await Task.Delay(50, ct).ConfigureAwait(false);
+        }
+
+        var result = new List<(TextRange, IReadOnlyList<RewriteEdit>)>();
+        lock (_gate)
+        {
+            foreach (var (range, sentence) in sentences)
+            {
+                if (_cache.TryGetValue(sentence, out var node) && node.Value.Whole.Count > 0)
+                    result.Add((range, node.Value.Whole));
+            }
+        }
+        return result;
     }
 
     /// <summary>Unloads the model (e.g. before deleting its file). It reloads on demand.</summary>
@@ -214,15 +265,15 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
 
         while (_enabled && !_failed && TryDequeue(out var sentence))
         {
-            var edits = await CorrectAsync(sentence, ct).ConfigureAwait(false);
-            if (edits is null) break; // the model couldn't be loaded
+            var answer = await CorrectAsync(sentence, ct).ConfigureAwait(false);
+            if (answer is null) break; // the model couldn't be loaded
             done++;
 
-            lock (_gate) AddToCache(sentence, edits);
-            if (edits.Count > 0) { pending = true; withEdits++; }
+            lock (_gate) AddToCache(answer);
+            if (answer.Edits.Count > 0) { pending = true; withEdits++; }
 
             bool queueEmpty;
-            lock (_gate) queueEmpty = _queue.Count == 0;
+            lock (_gate) queueEmpty = _queue.Count == 0 && _priority.Count == 0;
             if (pending && (queueEmpty || sinceNotify.Elapsed >= NotifyInterval))
             {
                 pending = false;
@@ -241,19 +292,22 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
     {
         lock (_gate)
         {
-            while (_queue.Count > 0)
+            foreach (var queue in new[] { _priority, _queue })
             {
-                sentence = _queue[0];
-                _queue.RemoveAt(0);
-                if (!_cache.ContainsKey(sentence)) return true;
+                while (queue.Count > 0)
+                {
+                    sentence = queue[0];
+                    queue.RemoveAt(0);
+                    if (!_cache.ContainsKey(sentence)) return true;
+                }
             }
         }
         sentence = string.Empty;
         return false;
     }
 
-    /// <summary>Edits for one sentence (empty when the model's answer isn't usable), or null if the model can't load.</summary>
-    private async Task<IReadOnlyList<RewriteEdit>?> CorrectAsync(string sentence, CancellationToken ct)
+    /// <summary>The model's answer for one sentence (no edits when it isn't usable), or null if the model can't load.</summary>
+    private async Task<CacheEntry?> CorrectAsync(string sentence, CancellationToken ct)
     {
         await _engineGate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -270,7 +324,7 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
                 catch (Exception ex)
                 {
                     _failed = true;
-                    lock (_gate) _queue = new();
+                    lock (_gate) { _queue = new(); _priority = new(); }
                     _logger.LogError(ex, "Couldn't load the grammar model; AI grammar checking is off until Redline restarts");
                     return null;
                 }
@@ -280,7 +334,7 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
             try
             {
                 var corrected = await _corrector.CorrectAsync(sentence, ct).ConfigureAwait(false);
-                return RewriteDiff.Compute(sentence, corrected);
+                return new CacheEntry(sentence, RewriteDiff.Compute(sentence, corrected), RewriteDiff.ComputeLoose(sentence, corrected));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -290,7 +344,7 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
             {
                 // Cache the empty result: retrying the same sentence would fail the same way.
                 _logger.LogWarning("Grammar model failed on a sentence: {Reason}", ex.GetType().Name);
-                return Array.Empty<RewriteEdit>();
+                return new CacheEntry(sentence, [], []);
             }
         }
         finally
@@ -300,10 +354,10 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
     }
 
     /// <summary>Caller holds _gate.</summary>
-    private void AddToCache(string sentence, IReadOnlyList<RewriteEdit> edits)
+    private void AddToCache(CacheEntry entry)
     {
-        if (_cache.ContainsKey(sentence)) return;
-        _cache[sentence] = _lru.AddLast((sentence, edits));
+        if (_cache.ContainsKey(entry.Sentence)) return;
+        _cache[entry.Sentence] = _lru.AddLast(entry);
         while (_lru.Count > CacheCapacity)
         {
             _cache.Remove(_lru.First!.Value.Sentence);

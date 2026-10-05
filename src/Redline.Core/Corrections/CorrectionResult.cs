@@ -22,3 +22,9 @@ public sealed record CorrectionResult(CorrectionOutcome Outcome, string Method, 
 
     public override string ToString() => $"{Outcome} via {Method} in {Duration.TotalMilliseconds:F0} ms: {Message}";
 }
+
+/// <summary>Outcome of a combined fix: how many of its edits were applied, and the last edit's result.</summary>
+public sealed record BatchCorrectionResult(int Applied, int Total, CorrectionResult Last)
+{
+    public bool Succeeded => Applied == Total && Last.Succeeded;
+}

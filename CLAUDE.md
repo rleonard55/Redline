@@ -182,6 +182,34 @@ list of app quirks and how each is handled. Read both before changing behavior.
   upstream — the NuGet packages only carry a license expression) + a section on the model's licenses.
   MSI grew to ~65 MB (local 0.7.0 build 2026-10-04).
 
+### Paragraph / sentence / selection fixes (2026-10-05, live-tested)
+- Owner's choices: **always preview**, the model's whole-sentence versions are included (correction only, not 6.1
+  rewriting), the selection uses the **same hotkey**, and the **paragraph** is the default scope (Sentence/Paragraph toggle).
+- `Core/Corrections/CompositeFix` (pure, `CompositeFixTests`): visible issues entirely inside the scope -> first
+  suggestion each, non-overlapping (primary over supplementary, then earlier/shorter), deletions pre-expanded.
+  A capitalized spelling word mid-sentence is offered unticked (likely a name). `Combine` = ticked edits, except a
+  ticked model version replaces every edit in its sentence. `Preview` = Same/Removed/Inserted runs, split only at
+  word boundaries ("go" -> "goes" shows the whole word).
+- `ReplacementEngine.ApplyBatchAsync(adapter, version, edits)`: snapshot version checked **once**, then back to front;
+  before each edit the live text must read as the last verified edit left it, and each edit goes through the normal
+  focus/select/type/verify/undo path (`ApplyEditAsync`, shared with `ApplyAsync`). A failed edit is undone and the
+  rest skipped; applied ones stay (each verified) -> "Applied 2 of 4 changes. ...". One Ctrl+Z per edit to undo.
+- GRMR: the cache keeps the strict edits (underlines) **and** `RewriteDiff.ComputeLoose` (no edit-count/fraction
+  limits, length ratio 0.5-2.0, but it rejects answers that drop > 1 word or > 15% of
+  the words: live, the model turned "This is an tset of the new feature." into "This is a new feature."). `GetSentenceAlternativesAsync(text, scope, wait)` puts uncached sentences in a
+  priority queue ahead of the analysis queue and waits (popup uses 10 s) - never shown as underlines.
+- UI: `SuggestionPopup` has "Fix this paragraph (N changes)..." (F) when the paragraph has >= 2 edits or the model
+  is available -> `FixPopup` (preview, checkbox per change, 1-9 toggle, S/P scope, Enter applies; model versions
+  arrive later via `SetAlternatives`, only those that differ from the individual fixes). Hotkey with a non-empty
+  selection (`ITextSurfaceAdapter.GetSelectionAsync`) -> `FixPopup` for the selection. Placement/palette shared
+  in `Corrections/FlyoutWindow`.
+- Live e2e: `tools/manual-tests/scripts/redline_fix_e2e.ps1` (throwaway WinForms form; stops the installed Redline
+  with --exit and restarts it; hotkey -> F -> Enter for the paragraph, then a selection -> hotkey -> Enter).
+  **PASS 2026-10-05** (3 of 3 and 2 of 2 edits, SelectAndType, other paragraph untouched, form stays in front).
+  A script started from the background can't take the foreground: `ForceFront` (AttachThreadInput) fixes that.
+  Interactive engine tests incl. 3 batch tests pass; `SelectAndPaste_AppliesAndRestoresTheClipboard` failed in its
+  own `Clipboard.SetText` (CLIPBRD_E_CANT_OPEN, another process held the clipboard) - unrelated.
+
 ### Phase gaps closed (2026-10-04, after the plan review)
 - **Overlay on DPI change:** `OverlayWindow.ShowAt` re-applies its exact rectangle if `WM_DPICHANGED` (sent during
   `SetWindowPos` onto a monitor with another scale) made WPF resize it. Not verifiable here (one monitor).

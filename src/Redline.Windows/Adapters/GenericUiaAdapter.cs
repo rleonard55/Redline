@@ -104,6 +104,20 @@ public sealed class GenericUiaAdapter : ITextSurfaceAdapter
         return prefix.GetText(-1)?.Length;
     }, ct);
 
+    public Task<TextRange?> GetSelectionAsync(CancellationToken ct = default) => InvokeOrNull<TextRange?>(() =>
+    {
+        if (_text is null) return null;
+
+        var selection = _text.GetSelection();
+        if (selection is null || selection.Length != 1) return null; // no selection, or a multi-range one
+
+        var prefix = _text.DocumentRange.Clone();
+        prefix.MoveEndpointByRange(TextPatternRangeEndpoint.End, selection[0], TextPatternRangeEndpoint.Start);
+        var start = prefix.GetText(-1)?.Length;
+        var selected = selection[0].GetText(-1);
+        return start is null || selected is null ? null : new TextRange(start.Value, selected.Length);
+    }, ct);
+
     public async Task<IReadOnlyList<TextBounds>> GetBoundsAsync(TextRange range, CancellationToken ct = default)
     {
         var result = await InvokeOrNull<IReadOnlyList<TextBounds>>(() =>

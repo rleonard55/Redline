@@ -86,6 +86,81 @@ public sealed class ReplacementEngine
         }
     }
 
+    /// <summary>
+    /// Applies several non-overlapping edits of the snapshot <paramref name="snapshotVersion"/> as one fix, back to
+    /// front so earlier offsets never shift. The snapshot is checked once; before each edit the live text must read
+    /// as the previous edit left it, and every edit is selected, typed and verified like a single correction. A
+    /// failed edit is undone and the rest are skipped; the edits already applied stay (each was verified).
+    /// </summary>
+    public async Task<BatchCorrectionResult> ApplyBatchAsync(ITextSurfaceAdapter adapter, long snapshotVersion, IReadOnlyList<FixEdit> edits, CancellationToken ct = default)
+    {
+        await _oneAtATime.WaitAsync(ct).ConfigureAwait(false);
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var (applied, result) = await ApplyBatchCoreAsync(adapter, snapshotVersion, edits, sw, ct).ConfigureAwait(false);
+            _perf?.Record("correction", result.Duration);
+            _compatibility?.Correction(adapter.Context, result);
+            _logger.LogInformation("Combined correction in {Process} ({Applied} of {Total} edits): {Result}",
+                adapter.Context.ProcessName, applied, edits.Count, result);
+            return new BatchCorrectionResult(applied, edits.Count, result);
+        }
+        finally
+        {
+            _oneAtATime.Release();
+        }
+    }
+
+    private async Task<(int Applied, CorrectionResult Result)> ApplyBatchCoreAsync(
+        ITextSurfaceAdapter adapter, long snapshotVersion, IReadOnlyList<FixEdit> edits, Stopwatch sw, CancellationToken ct)
+    {
+        CorrectionResult Reject(string message) => new(CorrectionOutcome.Rejected, "none", message, sw.Elapsed);
+
+        var snapshot = _document.Current;
+        if (_document.SurfaceId != adapter.Context.SurfaceId || snapshot is null)
+            return (0, Reject("That text field is no longer active."));
+        if (snapshotVersion != snapshot.Version)
+            return (0, Reject("The text changed after these issues were found."));
+        if (!adapter.Capabilities.CanReplaceText)
+            return (0, Reject("This field doesn't allow Redline to edit it."));
+        if (edits.Count == 0)
+            return (0, Reject("Nothing to change."));
+
+        var ordered = edits.OrderByDescending(e => e.Range.Start).ToList();
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            var edit = ordered[i];
+            if (edit.Range.Start < 0 || edit.Range.End > snapshot.Length || snapshot.GetSubstring(edit.Range) != edit.Original)
+                return (0, Reject("The issues no longer match the text."));
+            if (i + 1 < ordered.Count && ordered[i + 1].Range.End > edit.Range.Start)
+                return (0, Reject("The changes overlap."));
+        }
+
+        var current = snapshot.Text;
+        int applied = 0;
+        string method = "none";
+        foreach (var edit in ordered)
+        {
+            // The live text must read as the last verified edit left it (verification forgives trailing blanks at
+            // the end of the document; those can't move the earlier ranges, so continue from the live text).
+            var live = await adapter.ReadTextAsync(ct).ConfigureAwait(false);
+            if (live is null || !(live == current || (applied > 0 && CorrectionMath.EquivalentForVerification(live, current))) ||
+                edit.Range.End > live.Length || live.Substring(edit.Range.Start, edit.Range.Length) != edit.Original)
+                return (applied, Reject(applied == 0 ? "The text changed after these issues were found." : "The text changed while fixing it, so Redline stopped."));
+            current = live;
+
+            var expected = CorrectionMath.Apply(current, edit.Range, edit.Replacement);
+            var result = await ApplyEditAsync(adapter, current, edit.Range, edit.Replacement, expected, sw, ct).ConfigureAwait(false);
+            if (!result.Succeeded)
+                return (applied, result);
+            applied++;
+            method = result.Method;
+            current = expected;
+        }
+
+        return (applied, new CorrectionResult(CorrectionOutcome.Applied, method, "Applied.", sw.Elapsed));
+    }
+
     private async Task<CorrectionResult> ApplyCoreAsync(ITextSurfaceAdapter adapter, TextIssue issue, string replacement, Stopwatch sw, CancellationToken ct)
     {
         CorrectionResult Result(CorrectionOutcome outcome, string method, string message) => new(outcome, method, message, sw.Elapsed);
@@ -109,6 +184,19 @@ public sealed class ReplacementEngine
         // 2. Source verification: the live document must still read exactly as analyzed.
         if (await adapter.ReadTextAsync(ct).ConfigureAwait(false) != original)
             return Reject("The text changed after this issue was found.");
+
+        return await ApplyEditAsync(adapter, original, range, replacement, expected, sw, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Steps 3-4 of a correction: focus the target, then replace <paramref name="range"/> of <paramref name="original"/>
+    /// (which the live document reads as) and verify it reads as <paramref name="expected"/>, undoing it if not.
+    /// </summary>
+    private async Task<CorrectionResult> ApplyEditAsync(ITextSurfaceAdapter adapter, string original, TextRange range, string replacement,
+        string expected, Stopwatch sw, CancellationToken ct)
+    {
+        CorrectionResult Result(CorrectionOutcome outcome, string method, string message) => new(outcome, method, message, sw.Elapsed);
+        CorrectionResult Reject(string message) => Result(CorrectionOutcome.Rejected, "none", message);
 
         // 3. Focus the target (the popup or diagnostics window may have it).
         if (!await EnsureFocusAsync(adapter, ct).ConfigureAwait(false))

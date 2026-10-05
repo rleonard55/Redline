@@ -18,6 +18,9 @@ public interface ITextSurfaceAdapter : IDisposable
     /// <summary>Caret offset in document coordinates, or null if unavailable.</summary>
     Task<int?> GetCaretOffsetAsync(CancellationToken ct = default);
 
+    /// <summary>The selected range in document coordinates (empty at the caret), or null if unavailable.</summary>
+    Task<TextRange?> GetSelectionAsync(CancellationToken ct = default);
+
     /// <summary>Screen rectangles (physical pixels) covering <paramref name="range"/>; empty if unavailable.</summary>
     Task<IReadOnlyList<TextBounds>> GetBoundsAsync(TextRange range, CancellationToken ct = default);
 
