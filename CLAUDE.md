@@ -100,6 +100,28 @@ list of app quirks and how each is handled. Read both before changing behavior.
   messages say spelling/grammar still work and point to the offline installer. Tests in `GrmrTests`.
 - Still unknown for that user: their log (`%LOCALAPPDATA%\Redline\logs`) would show the analyzer lines.
 
+### Corrections without keystrokes + crash breadcrumbs (2026-10-05)
+- Report (same locked-down PC, offline MSI, 0.9.0/0.9.1): every correction (pill or Fix popup, in Notepad) ended the
+  process: no `Correction in ...` line, no managed exception, no crash report -> native crash or an outside kill.
+  Suspect: endpoint security stopping a process that injects keystrokes. Not confirmed (asked for event 1000/1026
+  and Defender log entries, and whether it still happens with AI grammar off).
+- New strategy `ReplacementStrategy.EditMessage` (first when the surface's native hwnd is a Win32 Edit/RichEdit class,
+  incl. WinForms wrappers and Notepad's `RichEditD2DPT`; `Input/EditControlMessages`): UIA selects + verifies the
+  range as before, then `EM_REPLACESEL` (undoable, SendMessageTimeout) replaces it - only if that hwnd is its
+  thread's focus window and not ES_READONLY. Undo = `EM_UNDO`. No modifier wait (no keys). Typing/paste follow.
+- `Core/Corrections/CorrectionGuard` (`%LOCALAPPDATA%\Redline\correction-pending`): strategy/step/process written
+  per step (focus, select, input, verify, undo), deleted when the edit ends. Found at startup -> warning in the log
+  + tray notice; if it died in input/verify/undo that strategy becomes a *suspect* (`correction-suspects`) and is
+  tried last until it applies an edit again. Step lines are also logged at Debug (diagnostics mode).
+- Tests: `CorrectionGuardTests`; `EditMessageTests` (interactive) host a WinForms TextBox/RichTextBox in a separate
+  powershell.exe so EM_REPLACESEL really crosses processes: replace, batch with deletion + non-ASCII, EM_UNDO revert.
+  Pass 2026-10-05 together with all ReplacementEngineTests. RichEdit's UIA text ends with "\r" (end-of-document).
+  Live in Windows 11 Notepad 2026-10-05 (scratch harness, fresh file, engine driven directly): single fix and a
+  2-edit batch applied via EditMessage (126/162 ms), Notepad marks the file modified, each edit is one undo step.
+  Seen there: one of three scripted Ctrl+Z chords (`KeyboardInput.Press(VK_Z, VK_CONTROL)`, 300 ms apart) arrived
+  as a bare z and replaced the selection. The engine's Ctrl+Z fallback (typed strategies) uses the same call;
+  not investigated yet.
+
 ### Installer: offline variant and safe upgrades (2026-10-05)
 - `build.ps1 -Offline [-ModelPath x.gguf]` -> `Redline-X.Y.Z-x64-offline.msi` (~840 MB): the app + the GRMR-V3 model
   (size/SHA-256 checked against the pins parsed from `GrmrModelStore.cs`; source = -ModelPath, else this machine's

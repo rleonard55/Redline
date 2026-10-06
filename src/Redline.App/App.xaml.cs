@@ -209,6 +209,16 @@ public partial class App : Application
             }
         });
 
+        Optional("correction crash check", () =>
+        {
+            if (services.GetRequiredService<CorrectionGuard>().LastCrash is not { } crash) return;
+            logger.LogWarning("The previous run ended while applying a correction ({Strategy}, step {Step}, in {Process})",
+                crash.Strategy, crash.Step, crash.Process);
+            _tray.Notify(crash.DuringEdit
+                ? "Redline closed unexpectedly while applying a correction last time (security software may have stopped it). It now tries a different way of editing text first."
+                : "Redline closed unexpectedly while applying a correction last time.", true);
+        });
+
         Optional("crash report check", () =>
         {
             if (log.LogDirectory is { } logDir && CrashReport.TakePending(logDir) is { } report)
@@ -496,10 +506,11 @@ public partial class App : Application
             sp.GetRequiredService<ILogger<AnalysisPipeline>>()));
 
         // Corrections
+        services.AddSingleton(_ => new CorrectionGuard(System.IO.Path.GetDirectoryName(DiagnosticsLog.DefaultDirectory)));
         services.AddSingleton(sp => new ReplacementEngine(
             sp.GetRequiredService<UiaDispatcher>(), sp.GetRequiredService<DocumentState>(),
             new ReplacementOptions(), sp.GetRequiredService<ILogger<ReplacementEngine>>(), sp.GetRequiredService<PerfCounters>(),
-            sp.GetRequiredService<CompatibilityLog>()));
+            sp.GetRequiredService<CompatibilityLog>(), sp.GetRequiredService<CorrectionGuard>()));
         services.AddSingleton<CorrectionController>();
 
         // Annotations

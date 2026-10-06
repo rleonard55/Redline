@@ -13,6 +13,12 @@ namespace Redline.Windows.Corrections;
 
 public enum ReplacementStrategy
 {
+    /// <summary>
+    /// Select the exact range via UIA, then replace it with <c>EM_REPLACESEL</c> (Win32 Edit/RichEdit controls only).
+    /// No synthesized keystrokes; keeps undo history.
+    /// </summary>
+    EditMessage,
+
     /// <summary>Select the exact range via UIA, then type the replacement. Keeps undo history and formatting.</summary>
     SelectAndType,
 
@@ -43,7 +49,10 @@ public sealed record ReplacementOptions
 /// Strategy order deliberately differs from the plan's (ValuePattern first): SetValue rewrites the
 /// whole document, which discards undo history and formatting and can clobber concurrent typing,
 /// and Phase 0 showed it silently fails in CKEditor. Range selection + typing is the most faithful
-/// edit, so it goes first; SetValue is reserved for controls that expose no text ranges.
+/// edit, so it goes first; SetValue is reserved for controls that expose no text ranges. In Win32 Edit/RichEdit
+/// controls an edit message replaces the verified selection before any keystrokes are tried: on a locked-down PC the
+/// process died while typing corrections (likely security software stopping injected keystrokes), and
+/// <see cref="CorrectionGuard"/> moves a strategy that died mid-edit to the end.
 /// The remaining risk is the few milliseconds between the last check and the keystrokes landing.
 /// </remarks>
 public sealed class ReplacementEngine
@@ -54,13 +63,15 @@ public sealed class ReplacementEngine
     private readonly ILogger _logger;
     private readonly PerfCounters? _perf;
     private readonly CompatibilityLog? _compatibility;
+    private readonly CorrectionGuard? _guard;
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
 
     public ReplacementEngine(UiaDispatcher uia, DocumentState document, ReplacementOptions? options = null, ILogger<ReplacementEngine>? logger = null,
-        PerfCounters? perf = null, CompatibilityLog? compatibility = null)
+        PerfCounters? perf = null, CompatibilityLog? compatibility = null, CorrectionGuard? guard = null)
     {
         _perf = perf;
         _compatibility = compatibility;
+        _guard = guard;
         _uia = uia;
         _document = document;
         _options = options ?? new ReplacementOptions();
@@ -198,66 +209,110 @@ public sealed class ReplacementEngine
         CorrectionResult Result(CorrectionOutcome outcome, string method, string message) => new(outcome, method, message, sw.Elapsed);
         CorrectionResult Reject(string message) => Result(CorrectionOutcome.Rejected, "none", message);
 
-        // 3. Focus the target (the popup or diagnostics window may have it).
-        if (!await EnsureFocusAsync(adapter, ct).ConfigureAwait(false))
-            return Reject("Couldn't move keyboard focus back to the text field.");
-
-        // 4. Strategies, most faithful first. Each either changes nothing (try the next), or produces a
-        //    final outcome.
-        var strategies = _options.Strategies ?? (adapter.Capabilities.CanGetSelection
-            ? [ReplacementStrategy.SelectAndType, ReplacementStrategy.SelectAndPaste]
-            : [ReplacementStrategy.SetValue]);
-
-        string lastReason = "No editing method is available for this field.";
-        bool attempted = false;
-        foreach (var strategy in strategies)
+        var process = adapter.Context.ProcessName;
+        void Step(ReplacementStrategy? strategy, string step)
         {
-            if (strategy == ReplacementStrategy.SelectAndType && replacement.IndexOfAny(['\r', '\n']) >= 0)
-                continue; // typed line breaks become Enter presses, which apps interpret differently
-
-            var (prepared, reason, cleanup) = await PrepareAsync(strategy, adapter, range, original, replacement, ct).ConfigureAwait(false);
-            if (!prepared)
-            {
-                // Keep the first failure: later strategies usually fail for the same root cause
-                // ("can't select") or for a reason that doesn't apply ("paste can't delete").
-                if (!attempted) lastReason = reason;
-                attempted = true;
-                continue;
-            }
-
-            try
-            {
-                if (!await KeyboardInput.WaitForModifiersReleasedAsync(_options.ModifierReleaseTimeout, ct).ConfigureAwait(false))
-                    return Reject("Release Ctrl/Alt/Shift/Win and try again.");
-                if (strategy != ReplacementStrategy.SetValue && !await adapter.HasKeyboardFocusAsync(ct).ConfigureAwait(false))
-                    return Reject("Keyboard focus moved away from the text field.");
-
-                if (!await ExecuteAsync(strategy, replacement, ct).ConfigureAwait(false))
-                {
-                    lastReason = "Windows rejected the synthesized input.";
-                    continue;
-                }
-
-                var outcome = await VerifyAsync(adapter, original, expected, ct).ConfigureAwait(false);
-                if (outcome == Verification.Matched)
-                    return Result(CorrectionOutcome.Applied, strategy.ToString(), "Applied.");
-                if (outcome == Verification.Unchanged)
-                {
-                    lastReason = $"{strategy} had no effect.";
-                    continue;
-                }
-
-                return await UndoAsync(adapter, original, strategy, sw, ct).ConfigureAwait(false);
-            }
-            finally
-            {
-                if (cleanup is not null)
-                    await cleanup().ConfigureAwait(false);
-            }
+            var name = strategy?.ToString() ?? CorrectionGuard.NoStrategy;
+            _guard?.Mark(name, step, process);
+            _logger.LogDebug("Correction step {Step} ({Strategy}) in {Process}", step, name, process);
         }
 
-        return Reject(lastReason);
+        string? appliedWith = null;
+        try
+        {
+            // 3. Focus the target (the popup or diagnostics window may have it).
+            Step(null, "focus");
+            if (!await EnsureFocusAsync(adapter, ct).ConfigureAwait(false))
+                return Reject("Couldn't move keyboard focus back to the text field.");
+
+            // 4. Strategies, most faithful first. Each either changes nothing (try the next), or produces a
+            //    final outcome. One that crashed the process last time (CorrectionGuard) goes last.
+            var strategies = _options.Strategies ?? DefaultStrategies(adapter);
+            if (_guard is not null && _options.Strategies is null)
+                strategies = _guard.Order(strategies, s => s.ToString());
+
+            string lastReason = "No editing method is available for this field.";
+            bool attempted = false;
+            foreach (var strategy in strategies)
+            {
+                if (strategy == ReplacementStrategy.SelectAndType && replacement.IndexOfAny(['\r', '\n']) >= 0)
+                    continue; // typed line breaks become Enter presses, which apps interpret differently
+
+                Step(strategy, "select");
+                var (prepared, reason, cleanup) = await PrepareAsync(strategy, adapter, range, original, replacement, ct).ConfigureAwait(false);
+                if (!prepared)
+                {
+                    // Keep the first failure: later strategies usually fail for the same root cause
+                    // ("can't select") or for a reason that doesn't apply ("paste can't delete").
+                    if (!attempted) lastReason = reason;
+                    attempted = true;
+                    continue;
+                }
+
+                try
+                {
+                    // Held modifiers would turn typed or pasted keys into shortcuts; messages aren't keys.
+                    if (UsesKeystrokes(strategy) &&
+                        !await KeyboardInput.WaitForModifiersReleasedAsync(_options.ModifierReleaseTimeout, ct).ConfigureAwait(false))
+                        return Reject("Release Ctrl/Alt/Shift/Win and try again.");
+                    if (strategy != ReplacementStrategy.SetValue && !await adapter.HasKeyboardFocusAsync(ct).ConfigureAwait(false))
+                        return Reject("Keyboard focus moved away from the text field.");
+
+                    Step(strategy, "input");
+                    if (!await ExecuteAsync(strategy, adapter, replacement, ct).ConfigureAwait(false))
+                    {
+                        lastReason = strategy == ReplacementStrategy.EditMessage
+                            ? "The text field didn't accept the edit."
+                            : "Windows rejected the synthesized input.";
+                        continue;
+                    }
+
+                    Step(strategy, "verify");
+                    var outcome = await VerifyAsync(adapter, original, expected, ct).ConfigureAwait(false);
+                    if (outcome == Verification.Matched)
+                    {
+                        appliedWith = strategy.ToString();
+                        return Result(CorrectionOutcome.Applied, strategy.ToString(), "Applied.");
+                    }
+                    if (outcome == Verification.Unchanged)
+                    {
+                        lastReason = $"{strategy} had no effect.";
+                        continue;
+                    }
+
+                    Step(strategy, "undo");
+                    return await UndoAsync(adapter, original, strategy, sw, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (cleanup is not null)
+                        await cleanup().ConfigureAwait(false);
+                }
+            }
+
+            return Reject(lastReason);
+        }
+        finally
+        {
+            _guard?.Finish(appliedWith);
+        }
     }
+
+    /// <summary>
+    /// Edit messages first where the control is a Win32 Edit/RichEdit (no keystrokes at all), then typing, then paste;
+    /// SetValue only for controls without text ranges.
+    /// </summary>
+    private static IReadOnlyList<ReplacementStrategy> DefaultStrategies(ITextSurfaceAdapter adapter)
+    {
+        if (!adapter.Capabilities.CanGetSelection)
+            return [ReplacementStrategy.SetValue];
+        return EditControlMessages.IsEditWindow(new IntPtr(adapter.Context.NativeWindowHandle))
+            ? [ReplacementStrategy.EditMessage, ReplacementStrategy.SelectAndType, ReplacementStrategy.SelectAndPaste]
+            : [ReplacementStrategy.SelectAndType, ReplacementStrategy.SelectAndPaste];
+    }
+
+    private static bool UsesKeystrokes(ReplacementStrategy strategy) =>
+        strategy is ReplacementStrategy.SelectAndType or ReplacementStrategy.SelectAndPaste;
 
     /// <summary>Sets up a strategy. Never changes document text; may change the selection or clipboard.</summary>
     private async Task<(bool Ok, string Reason, Func<Task>? Cleanup)> PrepareAsync(
@@ -265,6 +320,13 @@ public sealed class ReplacementEngine
     {
         switch (strategy)
         {
+            case ReplacementStrategy.EditMessage:
+                if (!EditControlMessages.IsEditWindow(new IntPtr(adapter.Context.NativeWindowHandle)))
+                    return (false, "This field isn't a standard Windows text box.", null);
+                return await adapter.SelectAsync(range, original, ct).ConfigureAwait(false)
+                    ? (true, string.Empty, null)
+                    : (false, "Couldn't select exactly the flagged text.", null);
+
             case ReplacementStrategy.SelectAndType:
                 return await adapter.SelectAsync(range, original, ct).ConfigureAwait(false)
                     ? (true, string.Empty, null)
@@ -298,8 +360,14 @@ public sealed class ReplacementEngine
         }
     }
 
-    private static async Task<bool> ExecuteAsync(ReplacementStrategy strategy, string replacement, CancellationToken ct) => strategy switch
+    private static async Task<bool> ExecuteAsync(ReplacementStrategy strategy, ITextSurfaceAdapter adapter, string replacement, CancellationToken ct) => strategy switch
     {
+        // The verified selection must still be in the control that has focus; the message replaces whatever is selected.
+        ReplacementStrategy.EditMessage => await Task.Run(() =>
+        {
+            var hwnd = new IntPtr(adapter.Context.NativeWindowHandle);
+            return EditControlMessages.IsFocusedEditWindow(hwnd) && EditControlMessages.ReplaceSelection(hwnd, replacement);
+        }, ct).ConfigureAwait(false),
         ReplacementStrategy.SelectAndType => replacement.Length == 0
             ? KeyboardInput.Press(KeyboardInput.VK_DELETE)
             : await KeyboardInput.TypeTextAsync(replacement, ct: ct).ConfigureAwait(false),
@@ -360,10 +428,13 @@ public sealed class ReplacementEngine
 
     private async Task<CorrectionResult> UndoAsync(ITextSurfaceAdapter adapter, string original, ReplacementStrategy strategy, Stopwatch sw, CancellationToken ct)
     {
-        // Only send Ctrl+Z into the field we just edited.
-        if (await adapter.HasKeyboardFocusAsync(ct).ConfigureAwait(false) &&
-            await KeyboardInput.WaitForModifiersReleasedAsync(_options.ModifierReleaseTimeout, ct).ConfigureAwait(false) &&
-            KeyboardInput.Press(KeyboardInput.VK_Z, KeyboardInput.VK_CONTROL))
+        // Only undo in the field we just edited: EM_UNDO to the control we sent the edit to, else Ctrl+Z.
+        bool sent = strategy == ReplacementStrategy.EditMessage
+            ? await Task.Run(() => EditControlMessages.Undo(new IntPtr(adapter.Context.NativeWindowHandle)), ct).ConfigureAwait(false)
+            : await adapter.HasKeyboardFocusAsync(ct).ConfigureAwait(false) &&
+              await KeyboardInput.WaitForModifiersReleasedAsync(_options.ModifierReleaseTimeout, ct).ConfigureAwait(false) &&
+              KeyboardInput.Press(KeyboardInput.VK_Z, KeyboardInput.VK_CONTROL);
+        if (sent)
         {
             var deadline = DateTime.UtcNow + _options.VerifyTimeout;
             while (DateTime.UtcNow < deadline)

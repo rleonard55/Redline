@@ -47,6 +47,7 @@ Always-on-top targets: underlines now show (overlay becomes topmost with the tar
 | First keystrokes after activation are dropped | Chromium PWAs | 150 ms settle after Redline activates a window, and after the suggestion popup hands focus back |
 | UIA `SetFocus` can leave the page's child window foreground | Chromium | `SetFocus` first, then bring the top-level window forward; the overlay compares the foreground window's root |
 | Batched Unicode keystrokes after a space all become the batch's last character ("ab cd" → "ab dd") | Windows 11 Notepad | Characters are sent one per SendInput call, 10 ms apart |
+| Process ended while typing a correction (likely endpoint security stopping injected keystrokes) | Notepad on a locked-down PC | Win32 Edit/RichEdit controls are edited with `EM_REPLACESEL` (no keystrokes); `CorrectionGuard` moves a strategy that died mid-edit to the end |
 | Emptied last paragraph is represented as a trailing space instead of a line break | Chromium | Verification forgives differences in trailing whitespace only |
 | Lone Alt press activates the menu bar / ribbon key tips, moving focus off the editor | Notepad, Word | (Test-harness artifact; users switching normally aren't affected) |
 | Address bar and ribbon fields are editable but never prose | Chrome/Edge, Office | `OmniboxViewViews` and `NetUI*` are skipped |
