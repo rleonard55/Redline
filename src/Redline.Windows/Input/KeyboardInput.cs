@@ -65,17 +65,51 @@ public static class KeyboardInput
         return true;
     }
 
-    /// <summary>Presses and releases <paramref name="key"/> while holding <paramref name="modifiers"/>.</summary>
-    public static bool Press(ushort key, params ushort[] modifiers)
+    /// <summary>Gap between the events of a chord; see <see cref="PressAsync"/>.</summary>
+    public static readonly TimeSpan ChordGap = TimeSpan.FromMilliseconds(20);
+
+    /// <summary>
+    /// Presses and releases <paramref name="key"/> while holding <paramref name="modifiers"/>: one SendInput call per
+    /// event, <see cref="ChordGap"/> apart, with real scan codes. Returns false if Windows rejected any event (the
+    /// modifiers are released anyway).
+    /// </summary>
+    /// <remarks>
+    /// Not one batch: Windows 11 Notepad handles queued keys late, and a batched Ctrl+Z sometimes arrived as a bare
+    /// "z" (Ctrl already released by the time the Z was handled), which replaced the selection instead of undoing.
+    /// </remarks>
+    public static async Task<bool> PressAsync(ushort key, ushort[]? modifiers = null, CancellationToken ct = default)
     {
-        var inputs = new List<INPUT>();
-        foreach (var m in modifiers) inputs.Add(Key(m, 0, 0));
+        modifiers ??= [];
         uint extended = key is VK_DELETE ? KEYEVENTF_EXTENDEDKEY : 0;
-        inputs.Add(Key(key, 0, extended));
-        inputs.Add(Key(key, 0, extended | KEYEVENTF_KEYUP));
-        foreach (var m in modifiers.Reverse()) inputs.Add(Key(m, 0, KEYEVENTF_KEYUP));
-        return Send(inputs.ToArray());
+        int down = 0;
+        bool ok = true;
+        try
+        {
+            foreach (var m in modifiers)
+            {
+                if (!(ok = Send([Key(m, Scan(m), 0)]))) return false;
+                down++;
+                await Task.Delay(ChordGap, ct).ConfigureAwait(false);
+            }
+            if (!(ok = Send([Key(key, Scan(key), extended)]))) return false;
+            await Task.Delay(ChordGap, ct).ConfigureAwait(false);
+            ok = Send([Key(key, Scan(key), extended | KEYEVENTF_KEYUP)]);
+            if (down > 0) await Task.Delay(ChordGap, CancellationToken.None).ConfigureAwait(false);
+            return ok;
+        }
+        finally
+        {
+            // Never leave a modifier down, even when cancelled or rejected midway.
+            for (int i = down - 1; i >= 0; i--)
+                ok &= Send([Key(modifiers[i], Scan(modifiers[i]), KEYEVENTF_KEYUP)]);
+        }
     }
+
+    /// <inheritdoc cref="PressAsync(ushort, ushort[], CancellationToken)"/>
+    public static Task<bool> PressAsync(ushort key, ushort modifier, CancellationToken ct = default) =>
+        PressAsync(key, [modifier], ct);
+
+    private static ushort Scan(ushort vk) => (ushort)MapVirtualKey(vk, 0 /* MAPVK_VK_TO_VSC */);
 
     /// <summary>
     /// Waits until Shift, Ctrl, Alt and Win are all physically released, so synthesized text isn't
@@ -146,4 +180,7 @@ public static class KeyboardInput
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint code, uint mapType);
 }

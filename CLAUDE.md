@@ -118,9 +118,15 @@ list of app quirks and how each is handled. Read both before changing behavior.
   Pass 2026-10-05 together with all ReplacementEngineTests. RichEdit's UIA text ends with "\r" (end-of-document).
   Live in Windows 11 Notepad 2026-10-05 (scratch harness, fresh file, engine driven directly): single fix and a
   2-edit batch applied via EditMessage (126/162 ms), Notepad marks the file modified, each edit is one undo step.
-  Seen there: one of three scripted Ctrl+Z chords (`KeyboardInput.Press(VK_Z, VK_CONTROL)`, 300 ms apart) arrived
-  as a bare z and replaced the selection. The engine's Ctrl+Z fallback (typed strategies) uses the same call;
-  not investigated yet.
+  Seen there once: one of three scripted Ctrl+Z chords arrived as a bare z and replaced the selection. NOT
+  reproduced in 28 later rounds (single undos and 3-edit/3-undo sequences, batched chord) - probably outside input
+  at that moment. Hardening anyway: `KeyboardInput.PressAsync` (replaces `Press`) sends one SendInput call per key
+  event, 20 ms apart, with real scan codes, and always releases the modifiers (Delete, Ctrl+V, Ctrl+Z).
+- `UiaDispatcher.Dispose` waited 500 ms for the STA thread, then disposed the queue under a still-running pump ->
+  ObjectDisposedException on that thread = process crash (test hosts; in the app only at exit). The pump now
+  treats it as shutdown and Dispose leaves the queue to the GC while the thread is alive.
+- Full Windows suite with REDLINE_INTERACTIVE_TESTS=1: 72 tests, all pass (the paste test's own Clipboard.SetText
+  hit CLIPBRD_E_CANT_OPEN once; passed on rerun).
 
 ### Installer: offline variant and safe upgrades (2026-10-05)
 - `build.ps1 -Offline [-ModelPath x.gguf]` -> `Redline-X.Y.Z-x64-offline.msi` (~840 MB): the app + the GRMR-V3 model

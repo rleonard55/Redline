@@ -92,6 +92,10 @@ public sealed class UiaDispatcher : IDisposable
         {
             // Normal shutdown
         }
+        catch (ObjectDisposedException)
+        {
+            // Shutdown while a work item outlasted Dispose's wait: an exception here would end the process.
+        }
     }
 
     public void Dispose()
@@ -107,6 +111,9 @@ public sealed class UiaDispatcher : IDisposable
             _staThread.Join(500);
         }
 
+        // A work item can outlast the wait (a slow UIA call); then leave the queue to the GC rather than dispose it
+        // under the pump (seen as test-host crashes: ObjectDisposedException in RunMessagePump).
+        if (_staThread.IsAlive) return;
         _workQueue.Dispose();
         _cts.Dispose();
     }

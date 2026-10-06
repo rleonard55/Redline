@@ -369,9 +369,9 @@ public sealed class ReplacementEngine
             return EditControlMessages.IsFocusedEditWindow(hwnd) && EditControlMessages.ReplaceSelection(hwnd, replacement);
         }, ct).ConfigureAwait(false),
         ReplacementStrategy.SelectAndType => replacement.Length == 0
-            ? KeyboardInput.Press(KeyboardInput.VK_DELETE)
+            ? await KeyboardInput.PressAsync(KeyboardInput.VK_DELETE, ct: ct).ConfigureAwait(false)
             : await KeyboardInput.TypeTextAsync(replacement, ct: ct).ConfigureAwait(false),
-        ReplacementStrategy.SelectAndPaste => KeyboardInput.Press(KeyboardInput.VK_V, KeyboardInput.VK_CONTROL),
+        ReplacementStrategy.SelectAndPaste => await KeyboardInput.PressAsync(KeyboardInput.VK_V, KeyboardInput.VK_CONTROL, ct).ConfigureAwait(false),
         ReplacementStrategy.SetValue => true, // already applied in PrepareAsync
         _ => false,
     };
@@ -433,7 +433,7 @@ public sealed class ReplacementEngine
             ? await Task.Run(() => EditControlMessages.Undo(new IntPtr(adapter.Context.NativeWindowHandle)), ct).ConfigureAwait(false)
             : await adapter.HasKeyboardFocusAsync(ct).ConfigureAwait(false) &&
               await KeyboardInput.WaitForModifiersReleasedAsync(_options.ModifierReleaseTimeout, ct).ConfigureAwait(false) &&
-              KeyboardInput.Press(KeyboardInput.VK_Z, KeyboardInput.VK_CONTROL);
+              await KeyboardInput.PressAsync(KeyboardInput.VK_Z, KeyboardInput.VK_CONTROL, ct).ConfigureAwait(false);
         if (sent)
         {
             var deadline = DateTime.UtcNow + _options.VerifyTimeout;

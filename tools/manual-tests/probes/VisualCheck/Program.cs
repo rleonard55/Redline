@@ -61,7 +61,7 @@ if (args[2] == "delete-raw")
     if (s0 < 0 || !await Focus()) { Console.WriteLine("not found or no focus"); return; }
     if (!await adapter.SelectAsync(new TextRange(s0, args[3].Length), txt)) { Console.WriteLine("could not select"); return; }
     if (!await adapter.HasKeyboardFocusAsync()) { Console.WriteLine("ABORT: focus moved"); return; }
-    KeyboardInput.Press(KeyboardInput.VK_DELETE);
+    await KeyboardInput.PressAsync(KeyboardInput.VK_DELETE);
     await Task.Delay(600);
     var after = await adapter.ReadTextAsync() ?? "";
     string Tail(string t) => t[Math.Max(0, t.Length - 40)..].Replace(((char)10).ToString(), "<LF>").Replace(((char)0xFFFC).ToString(), "<OBJ>");
