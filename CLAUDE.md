@@ -127,6 +127,9 @@ list of app quirks and how each is handled. Read both before changing behavior.
   treats it as shutdown and Dispose leaves the queue to the GC while the thread is alive.
 - Full Windows suite with REDLINE_INTERACTIVE_TESTS=1: 72 tests, all pass (the paste test's own Clipboard.SetText
   hit CLIPBRD_E_CANT_OPEN once; passed on rerun).
+- Live in Word 2026-10-06 (scratch harness, fresh .rtf, engine driven directly): `_WwG` is not an edit class, so
+  SelectAndType is used; single fix (257 ms), 2-edit batch with Delete (305 ms), forced SelectAndPaste with the
+  paced Ctrl+V (369 ms), then 4 paced Ctrl+Z presses each undid one edit back to the original, no stray z. 10/10.
 
 ### Installer: offline variant and safe upgrades (2026-10-05)
 - `build.ps1 -Offline [-ModelPath x.gguf]` -> `Redline-X.Y.Z-x64-offline.msi` (~840 MB): the app + the GRMR-V3 model
