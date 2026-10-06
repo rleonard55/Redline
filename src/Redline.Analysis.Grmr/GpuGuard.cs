@@ -65,6 +65,18 @@ public sealed class GpuGuard : IDisposable
         }
     }
 
+    /// <summary>The GPU failed during the trial without taking Redline down (the model runs in its own process): CPU only until <see cref="Reset"/>.</summary>
+    public void Block()
+    {
+        lock (_gate)
+        {
+            _inTrial = false;
+            _blocked = true;
+            TryWrite(BlockedFile);
+            TryDelete(TrialFile);
+        }
+    }
+
     /// <summary>The GPU worked once this session; later loads skip the marker.</summary>
     public bool TrialPassed { get; private set; }
 

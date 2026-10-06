@@ -446,11 +446,39 @@ public class GrmrModelIntegrationTests(Xunit.Abstractions.ITestOutputHelper outp
             return; // not configured on this machine
 
         bool gpu = Environment.GetEnvironmentVariable("REDLINE_GRMR_GPU") != "0";
-        using var corrector = LlamaSentenceCorrector.Create(ModelPath, gpu, new GpuGuard(null), NullLogger.Instance);
+        using var corrector = LlamaSentenceCorrector.Create(ModelPath, gpu ? Redline.Core.Settings.AiDevice.AnyGpu : Redline.Core.Settings.AiDevice.Cpu, new GpuGuard(null), NullLogger.Instance);
         output.WriteLine($"Running on {corrector.Device}");
         Assert.Equal("She goes to school every day.", await corrector.CorrectAsync("She go to school every day.", default));
         Assert.Equal("The results were better than expected.", await corrector.CorrectAsync("The results was better then expected.", default));
         const string fine = "Please review the attached document and let me know if you have any questions.";
         Assert.Equal(fine, await corrector.CorrectAsync(fine, default));
+    }
+}
+
+public class VulkanDevicesTests(Xunit.Abstractions.ITestOutputHelper output)
+{
+    [Fact]
+    public void OnlyADiscreteGpuGetsTheModel()
+    {
+        Assert.False(VulkanDevices.ShouldUseGpu([("Intel(R) Iris(R) Xe Graphics", VulkanDeviceType.IntegratedGpu)], out var integrated));
+        Assert.Equal("Intel(R) Iris(R) Xe Graphics", integrated);
+
+        Assert.True(VulkanDevices.ShouldUseGpu(
+            [("Intel(R) UHD Graphics", VulkanDeviceType.IntegratedGpu), ("NVIDIA GeForce RTX 4060 Laptop GPU", VulkanDeviceType.DiscreteGpu)], out _));
+
+        Assert.False(VulkanDevices.ShouldUseGpu([("llvmpipe", VulkanDeviceType.Cpu)], out integrated));
+        Assert.Null(integrated);
+        Assert.False(VulkanDevices.ShouldUseGpu([], out integrated));
+        Assert.Null(integrated);
+    }
+
+    [Fact]
+    public void ListsThisMachinesGpus_WithoutThrowing()
+    {
+        foreach (var (name, type) in VulkanDevices.List())
+        {
+            output.WriteLine($"{type}: {name}");
+            Assert.False(string.IsNullOrWhiteSpace(name));
+        }
     }
 }

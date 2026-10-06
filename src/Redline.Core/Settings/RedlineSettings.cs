@@ -14,8 +14,8 @@ public sealed record RedlineSettings
     /// </summary>
     public int Revision { get; init; }
 
-    /// <summary>1: the analysis delay default went from 300 to 150 ms.</summary>
-    public const int CurrentRevision = 1;
+    /// <summary>1: the analysis delay default went from 300 to 150 ms. 2: the GPU switch became <see cref="WritingSettings.AiGrammarDevice"/>.</summary>
+    public const int CurrentRevision = 2;
 
     /// <summary>Defaults for a new settings file.</summary>
     public static RedlineSettings CreateDefault() => new() { Revision = CurrentRevision };
@@ -29,6 +29,8 @@ public sealed record RedlineSettings
         var s = this;
         if (s.Revision < 1 && s.General?.AnalysisDelayMs == 300)
             s = s with { General = s.General with { AnalysisDelayMs = GeneralSettings.DefaultDelayMs } };
+        if (s.Writing?.AiGrammarUseGpu is { } useGpu) // the old switch: off = processor only, on = the new default
+            s = s with { Writing = s.Writing with { AiGrammarDevice = useGpu ? s.Writing.AiGrammarDevice : AiDevice.Cpu, AiGrammarUseGpu = null } };
         return s.Revision >= CurrentRevision ? s : s with { Revision = CurrentRevision };
     }
 
@@ -41,7 +43,10 @@ public sealed record RedlineSettings
             AnalysisDelayMs = Math.Clamp(General?.AnalysisDelayMs ?? GeneralSettings.DefaultDelayMs, GeneralSettings.MinDelayMs, GeneralSettings.MaxDelayMs),
             Hotkey = Hotkey.TryParse(General?.Hotkey, out var hk) ? hk.ToString() : GeneralSettings.DefaultHotkey,
         },
-        Writing = Writing ?? new(),
+        Writing = (Writing ?? new()) with
+        {
+            AiGrammarDevice = Enum.IsDefined(Writing?.AiGrammarDevice ?? AiDevice.Auto) ? Writing!.AiGrammarDevice : AiDevice.Auto,
+        },
         Applications = (Applications ?? new()) with
         {
             Excluded = (Applications?.Excluded ?? [])
@@ -113,15 +118,28 @@ public sealed record WritingSettings
 
     /// <summary>
     /// Extra grammar suggestions from the on-device GRMR-V3 model (downloaded on request). Off by
-    /// default: it needs a ~800 MB download and ~1 GB of memory while in use.
+    /// default: it needs a ~800 MB download, and memory while in use (~150 MB on the CPU, ~1.2 GB on integrated graphics).
     /// </summary>
     public bool AiGrammar { get; init; } = false;
 
-    /// <summary>
-    /// Run the AI grammar model on the GPU (Vulkan: NVIDIA, AMD, Intel) when one is available. Same speed
-    /// or faster than the CPU, and it keeps the processor free (about a tenth of the CPU time).
-    /// </summary>
-    public bool AiGrammarUseGpu { get; init; } = true;
+    /// <summary>Where the AI grammar model runs. Auto: a dedicated GPU if there is one, otherwise the processor.</summary>
+    public AiDevice AiGrammarDevice { get; init; } = AiDevice.Auto;
+
+    /// <summary>Before revision 2: the GPU on/off switch. Read once by <see cref="RedlineSettings.Migrated"/>, then dropped.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AiGrammarUseGpu { get; init; }
+}
+
+/// <summary>Where the AI grammar model runs (stored as a number: 0, 1, 2).</summary>
+public enum AiDevice
+{
+    /// <summary>A dedicated (discrete) GPU if there is one, otherwise the processor. On integrated graphics the model
+    /// is no faster than on the processor and takes ~1 GB more RAM.</summary>
+    Auto = 0,
+    /// <summary>Any GPU with Vulkan, integrated graphics included: ~10x less processor time, ~1 GB more RAM there.</summary>
+    AnyGpu = 1,
+    /// <summary>Never a GPU.</summary>
+    Cpu = 2,
 }
 
 public sealed record ApplicationSettings

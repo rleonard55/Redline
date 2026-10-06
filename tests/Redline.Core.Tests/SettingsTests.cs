@@ -58,7 +58,7 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal("Ctrl+Alt+.", store.Current.General.Hotkey);
         Assert.True(store.Current.General.HoverSuggestions);
         Assert.Contains("\"analysisDelayMs\": 150", File.ReadAllText(FilePath));
-        Assert.Contains("\"revision\": 1", File.ReadAllText(FilePath));
+        Assert.Contains($"\"revision\": {RedlineSettings.CurrentRevision}", File.ReadAllText(FilePath));
     }
 
     [Fact]
@@ -165,6 +165,30 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(expected, c.General.AnalysisDelayMs);
         Assert.Equal(RedlineSettings.CurrentRevision, c.Revision);
         Assert.Equal(expected, new SettingsStore(FilePath).Current.General.AnalysisDelayMs); // saved, not re-migrated
+    }
+
+    [Theory]
+    [InlineData("false", AiDevice.Cpu)]   // the old GPU switch, off: processor only
+    [InlineData("true", AiDevice.Auto)]   // on: the new default (a dedicated GPU only)
+    public void OldGpuSwitch_BecomesTheDeviceChoice_AndIsDropped(string useGpu, AiDevice expected)
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(FilePath, "{ \"revision\": 1, \"writing\": { \"aiGrammar\": true, \"aiGrammarUseGpu\": " + useGpu + " } }");
+
+        var c = new SettingsStore(FilePath).Current;
+
+        Assert.Equal(expected, c.Writing.AiGrammarDevice);
+        Assert.True(c.Writing.AiGrammar);
+        Assert.DoesNotContain("aiGrammarUseGpu", File.ReadAllText(FilePath));
+        Assert.Equal(expected, new SettingsStore(FilePath).Current.Writing.AiGrammarDevice);
+    }
+
+    [Fact]
+    public void UnknownDeviceNumber_FallsBackToAuto()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(FilePath, "{ \"revision\": 2, \"writing\": { \"aiGrammarDevice\": 7 } }");
+        Assert.Equal(AiDevice.Auto, new SettingsStore(FilePath).Current.Writing.AiGrammarDevice);
     }
 
     public void Dispose()

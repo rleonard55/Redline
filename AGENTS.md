@@ -132,8 +132,12 @@ list of app quirks and how each is handled. Read both before changing behavior.
 - **GPU (Vulkan)**: also ships `LLamaSharp.Backend.Vulkan.Windows` 0.25.0 (`native/vulkan/`, ~26 MB; same hand copy;
   its llama.dll still loads `ggml-cpu.dll` from the avx folders). One build for NVIDIA/AMD/Intel via the driver's
   vulkan-1.dll; LLamaSharp detects Vulkan by running `vulkaninfo --summary` (installed with GPU drivers), else CPU.
-  Setting `Writing.AiGrammarUseGpu` (default on). `LlamaSentenceCorrector.Create`: the native library is chosen
-  **once per process** (Vulkan only if the GPU was wanted at first load -> `GpuNeedsRestart`); GPU = all layers,
+  **Discrete GPUs only (2026-10-06):** `VulkanDevices` (vkEnumeratePhysicalDevices in the host process) -> integrated
+  only = CPU, Device "CPU (integrated GPU: name)" (Settings explains). Setting `Writing.AiGrammarDevice` (`AiDevice`
+  Auto = discrete only / AnyGpu / Cpu; stored as a number; Settings ComboBox in that order). Revision 2 migrates the old
+  `aiGrammarUseGpu` (false -> Cpu, true -> Auto) and drops it. Live 2026-10-06: grmr e2e PASS (Auto -> CPU on Iris Xe,
+  host ~135 MB), host exited 120 s after the last text, killed Redline -> host exits too; Redline at rest 167 MB. `LlamaSentenceCorrector.Create`: the native library is chosen
+  **once per process** (Vulkan only if the GPU was wanted at first load; the host process makes that moot); GPU = all layers,
   `SplitMode.None`/`MainGpu 0` (only on the GPU: the CPU runtime has no devices and rejects main_gpu 0); a failed
   GPU load falls back to CPU until restart. Toggling the setting unloads the model; it reloads on the next sentence.
   `GpuGuard` (models folder): `gpu-trial` marker around the first GPU load+sentence of a session (a driver crash
@@ -142,6 +146,15 @@ list of app quirks and how each is handled. Read both before changing behavior.
   Measured on Intel Iris Xe (2026-10-04): same latency as CPU (~1.2-1.5 s/sentence, identical output) but ~9x less
   CPU time (4.5 s vs 41.5 s over 8 sentences); discrete GPUs should also be much faster (not measured here).
   Real-model test: `REDLINE_GRMR_GPU=0` forces the CPU.
+- **Model in its own process (2026-10-06):** `HostedSentenceCorrector` starts `Redline.exe --grammar-host` (`GrmrHost`,
+  handled first in `OnStartup`, before the mutex/crash handlers) with two anonymous pipes (JSON lines: ready/error/
+  log/request/answer; stdout untouched), BelowNormal priority. Unloading = closing its input -> it exits. Why:
+  in-process, unloading left ~400 MB (Vulkan runtime state, freed only at process exit) and the loaded model on the
+  Iris Xe GPU was ~1.2 GB private (CPU: ~130 MB private + the mmapped file). Measured with the real host: Redline
+  stays ~9 MB for it, the host is gone 0.3-0.5 s after unload, start+load 1-2.5 s. Host death on the session's first
+  GPU sentence/load -> `GpuGuard.Block()` + retry on the CPU; 3 deaths in a row -> `GrammarModelLoadException` ->
+  analyzer `Failed`. Idle unload 10 -> **2 min**. Tests: `HostedSentenceCorrectorTests` (host in-process over real
+  anonymous pipes). On this Iris Xe the CPU was faster than the GPU (370-630 vs 650-770 ms/sentence).
 - `GrmrAnalyzer` (supplementary `ITextAnalyzer`): never waits for the model. `AnalyzeAsync` splits sentences
   (`Core/Text/SentenceSplitter`, <= 500 chars), returns cached results, and replaces the work queue with uncached
   sentences (new/edited first, max 60). One background worker corrects them; when a sentence gets edits it raises

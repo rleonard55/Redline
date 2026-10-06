@@ -21,7 +21,8 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
     public const int CacheCapacity = 4000;
     public const string RuleId = AnalyzerNames.GrammarModel + ":Correction";
 
-    private static readonly TimeSpan IdleUnload = TimeSpan.FromMinutes(10);
+    /// <summary>The model's process ends this long after the last sentence; starting it again takes ~1-4 s, in the background.</summary>
+    private static readonly TimeSpan IdleUnload = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan NotifyInterval = TimeSpan.FromSeconds(1.5);
 
     private readonly Func<string?> _modelPath;
@@ -339,6 +340,15 @@ public sealed class GrmrAnalyzer : ITextAnalyzer, IDisposable
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (GrammarModelLoadException ex)
+            {
+                _corrector.Dispose();
+                _corrector = null;
+                _failed = true;
+                lock (_gate) { _queue = new(); _priority = new(); }
+                _logger.LogError(ex, "The grammar model stopped working; AI grammar checking is off until Redline restarts");
+                return null;
             }
             catch (Exception ex)
             {

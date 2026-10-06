@@ -66,6 +66,13 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // The AI grammar model's own process (started by Redline when it has sentences to check).
+        if (GrmrHost.IsHostCommand(e.Args))
+        {
+            Shutdown(GrmrHost.Run(e.Args));
+            return;
+        }
+
         if (e.Args.Contains("--exit", StringComparer.OrdinalIgnoreCase))
         {
             Shutdown(ExitRunningInstance() ? 0 : 1);
@@ -436,12 +443,12 @@ public partial class App : Application
         var services = _services!;
         var grmr = services.GetRequiredService<GrmrAnalyzer>();
         grmr.Enabled = s.Writing.AiGrammar;
-        if (old is not null && old.Writing.AiGrammarUseGpu != s.Writing.AiGrammarUseGpu)
+        if (old is not null && old.Writing.AiGrammarDevice != s.Writing.AiGrammarDevice)
         {
-            _logger?.LogInformation("AI grammar on the GPU: {Enabled}", s.Writing.AiGrammarUseGpu);
-            if (s.Writing.AiGrammarUseGpu)
+            _logger?.LogInformation("AI grammar device: {Device}", s.Writing.AiGrammarDevice);
+            if (s.Writing.AiGrammarDevice != AiDevice.Cpu)
                 services.GetRequiredService<GpuGuard>().Reset(); // the user asked to try again
-            _ = grmr.ReleaseModelAsync(); // reloads on the next sentence, on the new device
+            _ = grmr.ReleaseModelAsync(); // its process ends; the next sentence starts one on the new device
         }
         if (old is null || old.Writing.AiGrammar == s.Writing.AiGrammar) return;
 
@@ -490,9 +497,10 @@ public partial class App : Application
             var store = sp.GetRequiredService<GrmrModelStore>();
             var settings = sp.GetRequiredService<SettingsStore>();
             var guard = sp.GetRequiredService<GpuGuard>();
-            var llamaLogger = sp.GetRequiredService<ILogger<LlamaSentenceCorrector>>();
+            var hostLogger = sp.GetRequiredService<ILogger<HostedSentenceCorrector>>();
+            var hostExe = Environment.ProcessPath ?? throw new InvalidOperationException("No process path");
             return new GrmrAnalyzer(() => store.InstalledPath,
-                path => LlamaSentenceCorrector.Create(path, settings.Current.Writing.AiGrammarUseGpu, guard, llamaLogger),
+                path => HostedSentenceCorrector.Start(hostExe, path, settings.Current.Writing.AiGrammarDevice, guard, hostLogger),
                 sp.GetRequiredService<ILogger<GrmrAnalyzer>>());
         });
         services.AddSingleton<ITextAnalyzer>(sp => sp.GetRequiredService<GrmrAnalyzer>());
@@ -739,16 +747,18 @@ public partial class App : Application
     {
         var services = _services!;
         var writing = services.GetRequiredService<SettingsStore>().Current.Writing;
-        if (!writing.AiGrammarUseGpu)
+        if (writing.AiGrammarDevice == AiDevice.Cpu)
             return "The model runs on the processor.";
         if (services.GetRequiredService<GpuGuard>().Blocked)
-            return "The graphics card crashed while running the model, so it runs on the processor. Turn this off and on again to retry.";
-        if (LlamaSentenceCorrector.GpuNeedsRestart)
-            return "Restart Redline to move the model to the graphics card.";
+            return "The graphics card crashed while running the model, so it runs on the processor. Choose \"Processor only\", then this option again, to retry.";
         return services.GetRequiredService<GrmrAnalyzer>().Device switch
         {
-            null => "Uses a graphics card with Vulkan support (NVIDIA, AMD, Intel) if there is one, otherwise the processor.",
+            null when writing.AiGrammarDevice == AiDevice.AnyGpu =>
+                "Uses any graphics card with Vulkan support (NVIDIA, AMD, Intel), integrated graphics included. On integrated graphics it keeps the processor free but needs about 1 GB more memory and isn't faster.",
+            null => "Uses a dedicated graphics card with Vulkan support (NVIDIA, AMD, Intel Arc) if there is one, otherwise the processor. Integrated graphics aren't faster for this model and would use about 1 GB more memory.",
             "CPU" => "Running on the processor: no usable graphics card was found.",
+            var device when device.StartsWith(LlamaSentenceCorrector.IntegratedGpuPrefix, StringComparison.Ordinal) =>
+                "Running on the processor: this PC has integrated graphics only (" + device[LlamaSentenceCorrector.IntegratedGpuPrefix.Length..].TrimEnd(')') + "), which aren't faster for this model and would use about 1 GB more memory.",
             var device => "Running on the graphics card (" + device["GPU: ".Length..] + ").",
         };
     }

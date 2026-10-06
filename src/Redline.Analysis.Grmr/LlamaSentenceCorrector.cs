@@ -5,6 +5,7 @@ using LLama.Common;
 using LLama.Native;
 using LLama.Sampling;
 using Microsoft.Extensions.Logging;
+using Redline.Core.Settings;
 
 namespace Redline.Analysis.Grmr;
 
@@ -32,7 +33,6 @@ public sealed class LlamaSentenceCorrector : ISentenceCorrector
 
     private static readonly object s_nativeGate = new();
     private static bool s_nativeConfigured;
-    private static bool s_vulkanAllowed;
     private static volatile bool s_gpuLoadFailed;
     private static volatile string? s_deviceName;
 
@@ -40,7 +40,10 @@ public sealed class LlamaSentenceCorrector : ISentenceCorrector
     private readonly StatelessExecutor _executor;
     private Action? _firstSuccess;
 
-    private LlamaSentenceCorrector(string modelPath, bool onGpu, Action? firstSuccess)
+    /// <summary><see cref="Device"/> when an integrated GPU was passed over for the CPU: "CPU (integrated GPU: name)".</summary>
+    public const string IntegratedGpuPrefix = "CPU (integrated GPU: ";
+
+    private LlamaSentenceCorrector(string modelPath, bool onGpu, Action? firstSuccess, string? integratedGpu = null)
     {
         var parameters = new ModelParams(modelPath)
         {
@@ -60,28 +63,29 @@ public sealed class LlamaSentenceCorrector : ISentenceCorrector
         _weights = LLamaWeights.LoadFromFile(parameters);
         _executor = new StatelessExecutor(_weights, parameters);
         _firstSuccess = firstSuccess;
-        Device = onGpu ? "GPU: " + (s_deviceName ?? "Vulkan") : "CPU";
+        Device = onGpu ? "GPU: " + (s_deviceName ?? "Vulkan")
+            : integratedGpu is not null ? IntegratedGpuPrefix + integratedGpu + ")"
+            : "CPU";
     }
 
     public string Device { get; }
 
     /// <summary>
-    /// True when the GPU is wanted but this process loaded the CPU-only runtime (llama.cpp's native
-    /// library can be chosen once per process), so using the GPU needs a restart.
-    /// </summary>
-    public static bool GpuNeedsRestart
-    {
-        get { lock (s_nativeGate) return s_nativeConfigured && !s_vulkanAllowed; }
-    }
-
-    /// <summary>
-    /// Loads the model, on the GPU if <paramref name="preferGpu"/> and the guard allow it and a Vulkan GPU is
-    /// present; falls back to the CPU if loading on the GPU fails.
+    /// Loads the model, on the GPU if <paramref name="device"/> and the guard allow it and a Vulkan GPU is present
+    /// (with <see cref="AiDevice.Auto"/> only a discrete one: see <see cref="VulkanDevices"/>); falls back to the
+    /// CPU if loading on the GPU fails.
     /// </summary>
     /// <exception cref="Exception">The native runtime or the model file could not be loaded.</exception>
-    public static LlamaSentenceCorrector Create(string modelPath, bool preferGpu, GpuGuard guard, ILogger logger)
+    public static LlamaSentenceCorrector Create(string modelPath, AiDevice device, GpuGuard guard, ILogger logger)
     {
-        bool tryGpu = preferGpu && !guard.Blocked && !s_gpuLoadFailed;
+        bool tryGpu = device != AiDevice.Cpu && !guard.Blocked && !s_gpuLoadFailed;
+        string? integrated = null;
+        if (tryGpu && device == AiDevice.Auto && !VulkanDevices.ShouldUseGpu(VulkanDevices.List(), out integrated))
+        {
+            tryGpu = false;
+            if (integrated is not null)
+                logger.LogInformation("Integrated GPU only ({Gpu}): the grammar model runs on the CPU", integrated);
+        }
         ConfigureNative(allowVulkan: tryGpu, logger);
         tryGpu &= NativeApi.llama_supports_gpu_offload(); // false: the CPU runtime was loaded (no Vulkan GPU, or the GPU was off at first load)
 
@@ -101,7 +105,7 @@ public sealed class LlamaSentenceCorrector : ISentenceCorrector
                 logger.LogWarning(ex, "Couldn't load the grammar model on the GPU; using the CPU until Redline restarts");
             }
         }
-        return new LlamaSentenceCorrector(modelPath, onGpu: false, firstSuccess: null);
+        return new LlamaSentenceCorrector(modelPath, onGpu: false, firstSuccess: null, integrated);
     }
 
     public async Task<string?> CorrectAsync(string sentence, CancellationToken ct)
@@ -139,7 +143,6 @@ public sealed class LlamaSentenceCorrector : ISentenceCorrector
         {
             if (s_nativeConfigured) return;
             s_nativeConfigured = true;
-            s_vulkanAllowed = allowVulkan;
         }
         NativeLibraryConfig.All
             .WithCuda(false)

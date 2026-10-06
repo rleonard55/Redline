@@ -134,7 +134,7 @@ public partial class SettingsWindow : Window
             GrammarBox.IsChecked = s.Writing.Grammar;
             StyleBox.IsChecked = s.Writing.StyleSuggestions;
             AiGrammarBox.IsChecked = s.Writing.AiGrammar;
-            AiGpuBox.IsChecked = s.Writing.AiGrammarUseGpu;
+            AiDeviceBox.SelectedIndex = (int)s.Writing.AiGrammarDevice; // items are in AiDevice order
             ShowAiDevice();
 
             ExcludedList.ItemsSource = s.Applications.Excluded;
@@ -348,13 +348,14 @@ public partial class SettingsWindow : Window
     {
         if (_loading) return;
         bool spelling = SpellingBox.IsChecked == true, grammar = GrammarBox.IsChecked == true,
-            style = StyleBox.IsChecked == true, ai = AiGrammarBox.IsChecked == true, gpu = AiGpuBox.IsChecked == true;
+            style = StyleBox.IsChecked == true, ai = AiGrammarBox.IsChecked == true;
+        var device = AiDeviceBox.SelectedIndex is >= 0 and <= (int)AiDevice.Cpu ? (AiDevice)AiDeviceBox.SelectedIndex : AiDevice.Auto;
         // Turning AI grammar on starts the model download (App.ApplyAiGrammar).
         _store.Update(s => s with
         {
             Writing = s.Writing with
             {
-                Spelling = spelling, Grammar = grammar, StyleSuggestions = style, AiGrammar = ai, AiGrammarUseGpu = gpu,
+                Spelling = spelling, Grammar = grammar, StyleSuggestions = style, AiGrammar = ai, AiGrammarDevice = device,
             },
         });
     }
